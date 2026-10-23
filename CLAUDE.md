@@ -14,6 +14,8 @@ The plan lives in [docs/plan.md](docs/plan.md); home server notes in [docs/serve
 5. **Server changes are risky.** The home server (`ssh r2d8@red8`) is only reachable over Tailscale. Never touch its network, Wi-Fi, Tailscale or SSH config, and ask before any destructive step. Claude has no general sudo there: privileged steps are scripts in `/tmp` that the user runs. See [docs/server.md](docs/server.md).
 6. **Respect API terms.** Free tiers used here are non-commercial; keep attribution (Open-Meteo CC BY 4.0, radar provider credit) in the app.
 7. **The user is new to Android.** They are an experienced programmer but this is their first Android app. Explain Android-specific concepts briefly the first time they come up (Gradle files, manifest, Compose, lifecycle, permissions, adb, etc.), say what each command or file does and why, and point out common pitfalls. Don't over-explain general programming.
+8. **Keep mobile data low.** No background refresh, compressed and cacheable responses, load heavy things (radar frames, satellite tiles) lazily, and measure data use when adding network features. See "Data budget" in `docs/plan.md`.
+9. **The home server is optional and off by default.** The app must work fully without it and give friends a basic build: never contact the server unless the user switched it on in Settings, and never ship a default address (the cleartext exception for the Tailscale IP in the network security config is the one allowed exception).
 
 ## Environment notes
 - Dev machine: Fedora Linux. Android Studio is in `~/opt/android-studio` (start with `~/opt/android-studio/bin/studio.sh`), SDK in `~/Android/Sdk` (`ANDROID_HOME` and `platform-tools` are set in `~/.bashrc`).

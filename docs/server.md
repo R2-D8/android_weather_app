@@ -21,13 +21,14 @@ Always-on old laptop that hosts the radar backend (Phase 4 of [plan.md](plan.md)
 
 ## Pending
 
-- **Reboot**: kernel 6.8.0-147 is installed, 6.8.0-139 is running. Check afterwards that Wi-Fi and Tailscale came back.
+- **Reboot (done 2026-10-24):** kernel 6.8.0-147 now running, no reboot pending, Docker, Tailscale and the radar container came back by themselves (about a minute). `ssh.service` shows disabled because Ubuntu 24.04 starts SSH through `ssh.socket`, which is enabled; that is normal. A reboot over SSH works (`ssh -t r2d8@red8 'sudo reboot'`, needs the sudo password, so the user runs it); the only risk is the laptop not rejoining Wi-Fi/Tailscale, which needs physical access.
+- **Radar backend 24 h check:** confirm `docker logs weather-radar` shows no errors and `/health` is `ok` a day after the reboot.
 - Optional hardening (with revert timers): `ufw allow in on tailscale0`, turn off SSH password login (key login works).
 - Check/disable Wi-Fi power saving (`iw` is not installed).
 
 ## Later
 
-- **Weather radar backend** (Phase 4): Compose stack in `/srv/stacks/weather-radar`.
+- **Weather radar backend** (Phase 4): Compose stack in `/srv/stacks/weather-radar`, project in `~/Desktop/projects/weather-radar` on the PC (GitHub: R2-D8/weather_radar_backend). Runs as its own system user `weather-radar` (uid/gid 10001, no sudo, no docker group, no login shell); the stack directory belongs to `r2d8`, only `./data` belongs to the service user. Port 8080 published on `100.95.20.125` only. Setup script `deploy/create-user.sh` (run by the user with sudo), deploy with `deploy/deploy.sh`. Status: **deployed 2026-10-24**, reachable at `http://100.95.20.125:8080` over Tailscale from the PC and the phone, survived a reboot; the 24 h check is still to do. The service user's group id is 987 (not 10001) until the updated `create-user.sh` is re-run; harmless.
 - **Pi-hole:** needs a fixed LAN IP and the laptop on the **main** network (the guest network isolates it), so an Ethernet cable or the main Wi-Fi. Port 53 conflicts with the `systemd-resolved` stub and must be freed first.
 - **Password manager** (Vaultwarden) and **git server** (Forgejo, lighter than GitLab for this hardware). A password manager needs real backups before it is used.
 - Backups: none needed today (nothing irreplaceable on the server); decide a target when the first irreplaceable data arrives.

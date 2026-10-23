@@ -2,7 +2,7 @@
 
 Ad-free Android weather app for personal use, with a rain/snow radar served by a backend on the home server.
 
-**Status (2026-10-24):** Phases 0 to 3 are done, including the forecast redesign (Phase 2b), checked on the phone. Next: **Phase 4** (radar backend on the home server). Server notes are in [server.md](server.md).
+**Status (2026-10-24):** Phases 0 to 3 are done, including the forecast redesign (Phase 2b), checked on the phone. **Phase 4** (radar backend) is deployed and waiting for its reboot and 24 h checks. Next: **Phase 5** (map and radar in the app). Phase 4b (radar for Finland) is postponed; Phase 7 (Tailscale security on the phone) is the last phase. Server notes are in [server.md](server.md).
 
 **Starting a new session:** `CLAUDE.md` is loaded automatically and points here. Read this plan and `server.md`, then continue with the current phase.
 
@@ -10,7 +10,9 @@ Ad-free Android weather app for personal use, with a rain/snow radar served by a
 
 | Topic | Decision |
 |---|---|
-| Distribution | Personal use only (sideloaded APK). Free API tiers are acceptable. Revisit if this ever goes public. |
+| Distribution | Sideloaded APK for personal use and **friends** (free, non-commercial). Free API tiers are acceptable. Revisit if this ever goes public or is monetised (licences below change then). |
+| Home server is optional | The connection to the home server is a Settings switch that is **off by default**, with an address field that is empty by default. A fresh install (a friend's) never contacts the server and has no address built in. Everything else (forecast, places, settings, RainViewer radar) works without it. |
+| Data usage | The app must be light on mobile data: no background refresh, forecast fetched only on open/resume when older than 10 minutes, compressed responses, small immutable radar tiles that the phone caches, past radar frames loaded only when played, and a measured budget (see "Data budget" under Radar architecture). |
 | Stack | Kotlin + Jetpack Compose (native Android), Material 3 |
 | Min / target Android | Min **API 33 (Android 13)**, which is the test phone. Target the latest stable API (compileSdk/targetSdk 37). |
 | App id / structure | `dev.r2d8.weather`, single module `:app`, Kotlin sources in `app/src/main/kotlin`. |
@@ -30,8 +32,10 @@ Ad-free Android weather app for personal use, with a rain/snow radar served by a
 | Look | Light/dark/system mode and colour themes. |
 | Map | MapLibre. Normal map: **OpenFreeMap** (vector, no key, styles liberty/bright/positron/dark). Satellite: **EOX Sentinel-2 cloudless** raster tiles. The user can switch between normal and satellite view. |
 | Not planned for now | Home-screen widget, rain/snow notifications (can be added later). |
-| Radar | Home-server backend (always on, reachable over Tailscale, also away from home) serves Italian DPC radar tiles with history; RainViewer as optional source, mainly outside Italy. |
-| Backend | Written **from scratch** in a new project (Python proposed, see Phase 4). The proof-of-concept was deleted on 2026-10-23, only its findings below remain. |
+| Radar | **RainViewer is the built-in default** (works for everyone, zoom 7, ~2 h history, credit shown). The **home-server backend** (Italian DPC radar, sharper, longer history, reachable over Tailscale also away from home) is an optional upgrade that must be switched on in Settings. |
+| Backend | **Python**, written **from scratch** in a new project folder `~/Desktop/projects/weather-radar` (own git repository). The proof-of-concept was deleted on 2026-10-23, only its findings below remain. |
+| Server connection | **Plain HTTP over Tailscale** (WireGuard already encrypts it). The app allows cleartext HTTP only for the server's fixed Tailscale address `100.95.20.125` (network security config); if that IP changes the app needs a rebuild. Tailscale's own configuration is not touched. |
+| Radar history | Animation shows the **last 2 hours** by default. The server keeps 6 hours so this can be extended later. |
 | Dev OS | Fedora, 8 cores, 14 GB RAM, ~300 GB free, KVM available |
 | Server | Ubuntu Server 24.04 LTS on an old laptop, Docker Compose stacks, Tailscale. Details in [server.md](server.md). |
 
@@ -58,18 +62,26 @@ No accounts or API keys are needed (Open-Meteo, DPC, RainViewer free tier). Disk
 
 - **RainViewer free API:** 13 past frames (~2 h, 10-min steps), no nowcast, pan-European, optional separate snow colours, tiles only up to zoom 7 (the app must overzoom), roughly 100 requests/IP/min stated (500/min seen in headers), personal use, credit required.
 - **DPC official tile service (WMS) is unreliable:** only the latest frame, ignores `time`, and returned empty tiles while the raw data had rain. Do not use it.
-- **DPC raw data is the better Italian source.** REST API `https://radar-api.protezionecivile.it` (no key, any `Origin` accepted): `GET /findLastProductByType?type=SRI` and `POST /downloadProduct {productType, productDate(ms)}` returning a pre-signed GeoTIFF URL. Products: SRI (rain rate mm/h), VMI (reflectivity dBZ), others. 1 km grid, every 5 min, 1200x1400 px, Transverse Mercator (origin 42°N 12.5°E, top-left -600000/650000 m, WGS84), float32, -9999 = no data, about 0.5 MB per frame. Past frames can be requested (6 h back worked). A WebSocket (`wss://radar-wss.protezionecivile.it`, topic `/topic/product`) announces new frames. CC-BY-SA 4.0, credit Radar-DPC. Coverage: Italy and surroundings.
+- **DPC raw data is the better Italian source.** REST API `https://radar-api.protezionecivile.it` (no key, any `Origin` accepted): `GET /findLastProductByType?type=SRI` and `POST /downloadProduct {productType, productDate(ms)}` returning a pre-signed GeoTIFF URL. Products: SRI (rain rate mm/h), VMI (reflectivity dBZ), others. 1 km grid, every 5 min, 1200x1400 px, Transverse Mercator (origin 42°N 12.5°E, top-left -600000/650000 m, WGS84), float32, -9999 = no data, about 0.5 MB per frame. Past frames can be requested (6 h back worked). A WebSocket (`wss://radar-wss.protezionecivile.it`, topic `/topic/product`) announces new frames. CC-BY-SA 4.0, credit Radar-DPC. Coverage (measured on a frame from 2026-10-23, 55% of the grid has data): about lon 5.6 to 18.9 E, lat 35.3 to 47.8 N. Covered: all of Italy including Sicily, Sardinia, Corsica, Malta, Slovenia (Ljubljana) and the Nice area. Inside the grid but **no data**: Switzerland, Zagreb and the Croatian coast, Marseille, Tunis. Outside the grid: Austria, Germany, France north of the Riviera, Balkans, Finland. The mask can also shrink when a radar is offline. History is the same 6 hours for the whole mosaic, not per location; outside it the app uses RainViewer.
+- **Finland (for Turku), checked 2026-10-24:** FMI (Finnish Meteorological Institute) publishes open radar data, CC BY 4.0, no key, in the public S3 bucket `fmi-opendata-radar-geotiff` (region eu-west-1, listable over HTTPS, e.g. `https://fmi-opendata-radar-geotiff.s3.eu-west-1.amazonaws.com/?list-type=2&prefix=2026/10/23/finrad/`). The Finland composite is `YYYY/MM/DD/finrad/YYYYMMDDHHMM_finland_cappi_600_dbzh_finrad_qc.tif`, one file every 5 minutes (12 per hour), about 1.6 MB, **reflectivity (dBZ) at 600 m height, not rain rate**: 8-bit, 5120 x 6144 cells of 250 m, LZW, projection ETRS89 / TM35FIN (EPSG:3067), top-left corner (-208000, 7926000) m, dBZ = 0.5 x value - 32, value 255 = no data. A rain rate has to be derived with a Z-R relation (for example Z = 200 R^1.6, an approximation). The sibling `finradfast` composite only offers accumulations (1 h, 12 h, 24 h). FMI keeps about 6 days in its download service; the bucket retention is not stated. FMI says its WMS is not meant for bulk or app use, so download the files. The layer names will change in November 2026. Turku lies well inside the composite. Source: https://en.ilmatieteenlaitos.fi/radar-data-on-aws-s3
+- **Pan-European (OPERA):** 15-minute, 2 km composites exist in EUMETNET's Open Radar Data archive (CloudFerro S3, 2011 to present), but the terms for free use are unclear (the only licence found is for research and education) and **Italy does not take part in OPERA**, which is why DPC is needed. Not pursued unless the user wants it.
 - **Rendering worked in the PoC:** reprojecting to Web Mercator tiles with bilinear interpolation took about 25 ms per tile (numpy + pyproj + Pillow). Compared with RainViewer it showed the same storms, smoother and with stronger cores.
 - **Snow:** DPC has no rain/snow distinction (RainViewer does). Idea for later: classify by model temperature near or below 0 °C.
 - **Discarded:** EUMETSAT satellite clouds (works, not needed), Open-Meteo grid sampling or raw model files (modelled, not observed rain), LibreWXR (self-hosted OPERA+DPC aggregator, AGPL, untested, possible alternative for pan-European radar).
 
 ### Radar architecture
 
-- The **backend** runs in Docker on the home server, ingests DPC frames, stores history, and serves tiles plus a frame list. The app shows them over MapLibre. Outside Italy (or if the server is unreachable) the app can use RainViewer.
-- **Ingest:** use the DPC WebSocket to learn about new frames, with a fallback check of `findLastProductByType` every 1–2 min that downloads only when a new frame exists. No blind polling of the download endpoint.
-- **History:** hours of frames kept is a backend setting, chosen later (PoC used 3 h).
-- **Colours:** user-selectable, including for DPC. The backend renders with a named palette or custom colour stops passed by the app, and caches tiles per palette. Rain/snow colour split later.
-- **Access:** only over Tailscale (publish the port on the Tailscale IP, never on all interfaces). Android allows one VPN at a time, so Tailscale must stay on on the phone. Fallbacks if that is a problem: Tailscale Funnel or a Cloudflare Tunnel with a token.
+- **Two radar sources behind one screen:** RainViewer (built in, default, no setup) and the home server (optional, off by default, see Decisions). The app has a small `RadarSource` abstraction (frame list + tile URL template + attribution) so the map code does not care which one is active.
+- The **backend** runs in Docker on the home server, ingests DPC frames, keeps 6 hours of history, and serves tiles plus a frame list over HTTP. The app shows them as a raster layer over MapLibre. If the server is switched on but unreachable, the app falls back to RainViewer.
+- **Ingest:** the plan was to use the DPC WebSocket to learn about new frames, with a fallback check of `findLastProductByType` that downloads only when a new frame exists. No blind polling of the download endpoint. (Implemented as polling only, timed to when the next frame is due; see Phase 4.)
+- **API (backend):** `GET /frames` (frame ids = epoch seconds, oldest to newest), `GET /tiles/{frame}/{palette}/{z}/{x}/{y}.png`, `GET /palettes`, `GET /health`, `GET /attribution`. Frames are immutable once complete, so past-frame tiles are served with `Cache-Control: public, max-age=31536000, immutable`; only the newest frame gets a short cache.
+- **Colours:** user-selectable, including for DPC. The backend renders with a named palette and caches tiles per palette; custom colour stops and the rain/snow colour split come later.
+- **Access:** only over Tailscale: the port is published on the Tailscale IP `100.95.20.125`, never on all interfaces. Android allows one VPN at a time, so Tailscale must stay on on the phone. Plain HTTP is fine because Tailscale encrypts the link; the app's network security config allows cleartext for that one address only. Fallbacks if Tailscale on the phone is a problem: Tailscale Funnel or a Cloudflare Tunnel with a token.
+- **Data budget (mobile data matters):**
+  - Tiles are palette PNGs (a few KB each); fully empty tiles are one shared tiny image.
+  - The backend only serves up to about the native resolution (the DPC grid is 1 km, roughly zoom 8); the app **overzooms** beyond that instead of downloading finer tiles that contain no extra information. Tile size (256 or 512 px) is decided by measurement in Phase 5.
+  - The app loads only the newest frame at first and fetches older frames when the user presses play or drags the timeline; everything is cached on the phone, so a repeat view costs almost nothing.
+  - Target to verify in Phase 5: first full 2-hour animation of a regional view under about 1 MB, a cached repeat view close to 0. The forecast screen already uses compressed JSON and no background work.
 
 ## Phase 1 – Project setup (done 2026-10-23)
 
@@ -130,13 +142,44 @@ Requested after Phase 2: hourly detail like 3bmeteo, with each of the 10 days ex
 - **Known gaps:** the Places screen reorders with up/down buttons, not drag and drop.
 - **Dev notes:** the debug build is slow (a few frames per second on the A32 at times), which is normal for debug; try `assembleRelease` if performance matters. Lint passes without errors; remaining warnings are the missing icon, `allowBackup`, one long icon path and a state-type hint.
 
-## Phase 4 – Radar backend (new project on the home server)
+## Phase 4 – Radar backend (done 2026-10-24; 24 h soak check still running)
 
-- New repository/folder for the backend (not the PoC). Language: Python proposed (mature geo and raster libraries: numpy, pyproj, Pillow/rasterio), typed, with tests that use a stored sample GeoTIFF. Language to be confirmed at the start of this phase.
-- Components: DPC ingest (WebSocket + fallback check, retries, gaps), frame store with pruning by `HISTORY_HOURS`, tile renderer (palette parameter, tile cache), HTTP API (`/frames`, `/tiles/...`, `/health`, attribution), Docker image, Compose stack in `/srv/stacks/weather-radar`, unprivileged container user, memory limit, port published only on the Tailscale IP, log rotation (already configured).
-- Open: rain/snow split, how much history, whether to also fetch RainViewer through the backend.
-- Radar findings above are the starting knowledge; nothing from the PoC code is reused.
-- Done when: the stack runs on the server after a reboot, frames keep updating for 24 h without errors, a tile renders in well under 100 ms, and the API is reachable from the PC and the phone over Tailscale.
+Project: `~/Desktop/projects/weather-radar` (own git repo, public on GitHub at https://github.com/R2-D8/weather_radar_backend, kept updated by pushing after each piece of work; README, CLAUDE.md). Python, aiohttp, numpy, pyproj, Pillow; 92 tests, ruff and strict mypy clean. Not the deleted proof of concept.
+
+**Done (2026-10-24):**
+- Ingest: polls DPC `findLastProductByType` **timed to when the next frame is due** (frames come every 5 minutes and appear about 9 to 10 minutes late; the delay is learned; after a new frame the service sleeps until the next is due, then re-checks every 30 s, so about 1 to 3 tiny requests per 5 minutes instead of 5 a minute-poll would make) and downloads missing frames, newest first, at most 12 per poll, with retries, a growing pause while DPC is down, and a check that every download really is a frame on the expected grid before it is stored. 6 hours of history are kept (`RADAR_HISTORY_HOURS`). A real start with an empty store fetched 12 frames in about 7 s.
+- Renderer: tile from frame in **about 20 ms** (target under 100 ms), rainy tiles 3 to 6 KB, empty tiles one shared 116-byte PNG. Bilinear sampling, averaged lower-detail copies of the grid for zoomed-out tiles, 4-bit palette PNG, 256 or 512 px tiles, zoom 0 to 8.
+- API as in Radar architecture (`/frames`, `/tiles/...`, `/palettes`, `/health`, `/attribution`); two palettes (`classic`, `blues`); tiles in memory cache (cold 20 to 45 ms over HTTP, cached under 1 ms); past frames are `immutable` for the phone's cache.
+- Docker image (263 MB) tested locally as an unprivileged user with a read-only filesystem and all capabilities dropped; Compose stack and deploy scripts written.
+
+**Findings that differ from the plan or notes:**
+- **WebSocket not used.** `wss://radar-wss.protezionecivile.it` accepts a connection but did not answer a STOMP handshake and sent nothing in 40 s, so announcements are unverified. Polling the tiny `findLastProductByType` JSON once a minute is what is implemented; a WebSocket can be added later if it ever matters.
+- The GeoTIFF tags confirm the notes exactly (1 km grid, top-left corner (-600000, 650000) m, Transverse Mercator at 42 N 12.5 E, WGS84, no-data -9999). Every file is checked against them.
+- **Geometry check:** unit tests cover the projection origin, north-up/east-right orientation and cell centring. A comparison with RainViewer tiles of the same moment was inconclusive (their echo area is about 2.5 times larger, intensities do not correlate), so the final visual check is overlaying the tiles on a basemap in Phase 5.
+- Found while testing: reading a download with a single `read()` can return a partial body; it now reads to the end in chunks.
+
+**Security:** the service runs as its own unprivileged user `weather-radar` (uid/gid 10001: not in the sudo or docker groups, no login shell, no home), not as `r2d8`. The container has a read-only root filesystem, no capabilities, `no-new-privileges`, 768 MB memory limit and its port is published only on `100.95.20.125`. The user and `./data` directory are created by `deploy/create-user.sh`, which the user runs with sudo (copied to `/tmp/weather-radar-create-user.sh` on the server).
+
+**Deployed (2026-10-24):** `deploy/create-user.sh` was run by the user (it created user `weather-radar`, uid 10001, **gid 987**: that first version let the system pick the group id; the script now creates gid 10001 and repairs an existing group when re-run, which is optional because the container's uid 10001 owns the data folder), then `deploy/deploy.sh` built and started the stack in `/srv/stacks/weather-radar`. Checked from the PC over Tailscale: `/health` ok, 24 of 73 frames after the first minute (12 per 20 s poll), tiles 3 to 5 KB in 0.2 to 0.6 s including the network, container user `uid=10001(radar)`, data folder unreadable by `r2d8` as intended.
+
+**Verified:**
+- The phone reaches `/health` over Tailscale (user confirmed, 2026-10-24).
+- **Reboot test passed (2026-10-24):** the server came back on the new kernel 6.8.0-147 with no reboot pending; Tailscale had its address; the container (`restart: unless-stopped`) was up and healthy about a minute after boot with 0 restarts, and all 73 frames in the data volume survived.
+
+**Remaining:** the 24 h check (frames keep updating without errors). The clock restarted at the reboot (about 22:36 UTC on 23 Oct); look at `docker logs weather-radar` and `/health` (`last_error`, `downloaded_total`, newest frame age) after that. Nothing else blocks Phase 5.
+- Later: rain/snow split.
+
+## Phase 4b – Radar for places outside Italy (postponed by the user, 2026-10-24)
+
+**Decision:** not now. Turku keeps using RainViewer (works in Finland); the home server stays Italy-only. When this is picked up later, build it **before** the app depends on the server API for more than Italy, so the app is not rewritten. Everything below is the researched starting point.
+
+Why: the user studies in Turku for a while and saved it as a place; DPC covers Italy only, so the home-server radar shows nothing there (RainViewer still works). History cannot be kept "per saved place": a national radar mosaic covers a whole country, and the server would have to be told the user's places (which also leaks them). The workable design is **one source per region**, each stored in full.
+
+- Backend gets a `Source` abstraction (id, name, coverage bounds, frame step, ingest, grid, decode). Sources: `dpc` (Italy, exists) and `fmi` (Finland, new). `GET /sources` lists them with bounds; `/frames` and `/tiles/...` take the source id (`/{source}/frames`, `/{source}/tiles/{frame}/{palette}/{z}/{x}/{y}.png`; the current paths stay as aliases for `dpc` until the app uses the new ones). The app picks the source whose bounds contain the place, and falls back to RainViewer if none does or the server is off.
+- FMI ingest: list the bucket by the date prefix every few minutes, download new `finrad` files, keep 6 hours (72 frames, about 117 MB on disk, 31 MB decoded per frame in memory).
+- Rendering: same pipeline; the FMI grid is TM35FIN at 250 m, so the projection and cell size are per source. dBZ is converted to mm/h with Z = 200 R^1.6 so both sources share the same palettes and legend (documented as an approximation: it ignores snow and bright-band effects, which matters in Finnish winter).
+- Open questions: how much to trust the Z-R conversion for snow (a snow-specific relation or a dBZ legend for Finland); whether to add more sources later (Sweden, Estonia, OPERA).
+- Done when: the app shows a Finnish frame list for Turku from the server, tiles render in under 100 ms, 24 h of FMI frames are stored without errors, and Italian behaviour is unchanged.
 
 ## Phase 5 – Radar in the app
 
@@ -144,12 +187,38 @@ Requested after Phase 2: hourly detail like 3bmeteo, with each of the 10 days ex
   - Normal: OpenFreeMap vector tiles (`https://tiles.openfreemap.org/styles/liberty`, also `bright`, `positron`, `dark`; the dark style follows the app's dark mode). No key, no stated limits, donation-funded, no SLA, attribution "OpenFreeMap © OpenMapTiles Data from OpenStreetMap" (MapLibre shows it automatically).
   - Satellite: EOX Sentinel-2 cloudless 2024 raster tiles (`https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/default/g/{z}/{y}/{x}.jpg`, tested up to zoom 16). 10 m/px, so blurry beyond about zoom 14. Free for personal non-commercial use (CC BY-NC-SA 4.0), attribution required: "EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2024)". Becomes a commercial licence if the app is ever monetised or distributed.
   - Not chosen: Esri World Imagery (sharper, but a key and unclear third-party terms), OSM's own tile servers (not for app use), Mapbox/MapTiler (key and limits).
-- Radar overlay from the backend with animated past frames, play/pause, timeline slider, opacity, legend, colour palette setting, RainViewer option (zoom limit 7, overzoom), automatic fallback to RainViewer when the home server is unreachable, attribution (Radar-DPC, RainViewer, map data).
-- Done when: radar animates smoothly on the phone at home and away from home over Tailscale.
+- Radar overlay with animated past frames (last 2 hours by default), play/pause, timeline slider, opacity, legend, colour palette setting, attribution (Radar-DPC, RainViewer, map data). RainViewer works out of the box (zoom limit 7, overzoom). Past frames load lazily, see the data budget above.
+- **Settings > Home server** (new): a switch, **off by default**, an address field, **empty by default**, and a "Test connection" button. When off, the app never contacts the server. When on but unreachable, the radar falls back to RainViewer with a small notice. The only server-related thing compiled in is the cleartext exception for `100.95.20.125` in the network security config.
+- Done when: radar animates smoothly on the phone with RainViewer, and with the home server at home and away from home over Tailscale; a fresh install with default settings makes no request to the server; the measured data use meets the budget.
 
 ## Phase 6 – Later / stretch
 
 Rain vs snow colours for DPC, notifications, home-screen widget, "rain starts in X minutes" from radar nowcast, severe-weather alerts. Server: Pi-hole, password manager, git server (see [server.md](server.md)).
+
+## Phase 7 – Tailscale security on the phone (last phase)
+
+Goal: keep the convenience of reaching the home server from the phone, while making a lost or compromised phone a small problem instead of a way into the server.
+
+**What is known (cross-checked 2026-10-24, measurements from the user's Galaxy A32 against published reports):**
+
+| Topic | Published | Measured on the phone |
+|---|---|---|
+| Idle data | Forum reports of ~64-byte packets every 5 to 10 s, roughly 30 MB a week or ~120 MB a month idle ([forum 1](https://forum.tailscale.com/t/data-consumption-when-idle-on-metered-connection/3241), [forum 2](https://forum.tailscale.com/t/volume-of-idle-traffic/1318)); a Tailscale reply says the mobile apps are tuned to reduce idle traffic and no knobs exist ([forum 3](https://forum.tailscale.com/t/ways-to-minimize-idle-traffic/2188)). Gigabyte-per-day cases had other causes (two overlay networks, flapping relays). | About 0.2 MB in ~12 h on Wi-Fi (Android's per-app counters) and 31 KB inside the tunnel (`tun0`). Roughly 10x below the forum figure. Android showed only "foreground" entries for the app, so this may be an undercount: treat it as a lower bound. |
+| Battery | Anecdotes only, no official figures: from about 1% over ten days ([lemmy](https://lemmy.klein.ruhr/post/34612)) to ~5% a day, up to 30 to 40% overnight on GrapheneOS with the cause disputed ([lemmy](https://feddit.it/post/8664648)). Depends on traffic through the tunnel; split tunnelling (only tailnet addresses use it, which is the default without an exit node) is reported as unnoticeable. | Tailscale's VPN service ran 12 h 20 min; about 5 s of CPU; not in the per-app power list. Fits the low end. |
+| Reliability | Reports of the Android app dropping every 10 to 20 minutes unless it is the system's always-on VPN or exempt from battery optimisation ([forum](https://forum.tailscale.com/t/android-constantly-stopping/4689)). | Not observed (connected the whole charge cycle). |
+| Lost phone | Official guidance: nodes re-authenticate every 180 days by default, keep key expiry on, remove the device in the admin console, use least-privilege access rules, auto-update clients ([Tailscale security best practices](https://tailscale.com/kb/1196/security)). Access rules are deny-by-default once defined ([grants syntax](https://tailscale.com/kb/1538/grants-syntax)). | Not checked: the user has not shown the tailnet policy or the phone's key-expiry setting. |
+
+**Risks in this setup:** (1) as far as the plan knows the tailnet still has the default policy that lets every device reach every other, so the phone could reach the server's SSH port (port 22 is open on the Tailscale interface); (2) SSH password login is still enabled on the server and `r2d8` is a sudoer; (3) Android allows one VPN at a time; (4) the server's own key expiry is disabled (deliberately, for availability).
+
+**Work:**
+1. Read the current tailnet policy and device list together with the user (the user pastes the policy file from the admin console; Claude never changes the Tailscale setup remotely).
+2. Write and test an access rule so the phone can reach only the radar server on TCP 8080, while the PC keeps SSH. Draft (own reconstruction, **verify against the grants reference before use**): `{"grants": [{"src": ["<phone's 100.x address>"], "dst": ["100.95.20.125"], "ip": ["tcp:8080"]}]}` plus a grant for the PC. Test from the phone with `adb shell nc -zv 100.95.20.125 8080` (must work) and port 22 (must fail).
+3. Server: turn off SSH password login (key login already works), with the revert timer and second session required by `docs/server.md`.
+4. Phone: confirm key expiry is on for the phone and note its expiry date; write down the lost-phone procedure (remove the device in the admin console) and practise it once with a spare or the PC; keep the screen lock on. Optional: set Tailscale as Android's always-on VPN if drops are seen, and leave "block connections without VPN" **off** so the phone keeps normal internet if Tailscale drops.
+5. Measure for a week: a small script that records Tailscale's data and battery counters from the phone once a day (`adb shell dumpsys batterystats` / `netstats`); replace the table's "measured" column with the result.
+6. App side (small): the home-server switch stays off by default; consider showing "Tailscale not connected" in the radar notice when the server is unreachable.
+7. Record the final policy in `docs/server.md`.
+- Done when: the phone can fetch `/health` on port 8080 and cannot open port 22, SSH password login is off, the lost-phone procedure is written and tested, and a week of battery and data numbers is in this table.
 
 ## Server work remaining (not tied to a phase)
 
