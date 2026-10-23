@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sun behind a cloud. Everything stays inside the 66 dp safe zone at the centre of the 108 dp canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Sun rays -->
+    <path
+        android:pathData="M77,42L81,42M72.6,52.6L75.4,55.4M62,57L62,61M51.4,52.6L48.6,55.4M47,42L43,42M51.4,31.4L48.6,28.6M62,27L62,23M72.6,31.4L75.4,28.6"
+        android:strokeColor="#FFFFD54F"
+        android:strokeWidth="3"
+        android:strokeLineCap="round" />
+    <!-- Sun -->
+    <path
+        android:fillColor="#FFFFD54F"
+        android:pathData="M50,42a12,12 0 1,0 24,0a12,12 0 1,0 -24,0Z" />
+    <!-- Cloud: three puffs and a rounded base -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M35,58a9,9 0 1,0 18,0a9,9 0 1,0 -18,0Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M44,53a12,12 0 1,0 24,0a12,12 0 1,0 -24,0Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M60,59a9,9 0 1,0 18,0a9,9 0 1,0 -18,0Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M38,71H75A6.5,6.5 0 0 0 75,58H38A6.5,6.5 0 0 0 38,71Z" />
+</vector>

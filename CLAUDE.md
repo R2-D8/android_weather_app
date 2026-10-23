@@ -21,12 +21,13 @@ The plan lives in [docs/plan.md](docs/plan.md); home server notes in [docs/serve
 - Keep temporary files out of the project tree.
 
 ## Project structure
-Single module `:app`, package `dev.r2d8.weather`, Kotlin sources in `app/src/main/kotlin`, versions in `gradle/libs.versions.toml`. Manual DI (no Hilt). Stack and phases: see [docs/plan.md](docs/plan.md).
+Single module `:app`, package `dev.r2d8.weather`, Kotlin sources in `app/src/main/kotlin`, versions in `gradle/libs.versions.toml`. Manual DI (no Hilt): `AppContainer` is created in `WeatherApplication` and ViewModels get dependencies from it. Packages: `data` (remote, local/Room, repositories for weather, places and settings, location), `domain` (models and pure logic), `ui` (Compose screens: weather, places, settings, about, theme). Room schemas are exported to `app/schemas` (commit them). Stack, phases and the Phase 2 design notes: see [docs/plan.md](docs/plan.md).
 
 ## Commands
 Run from the project root (needs `ANDROID_HOME`, see above):
 - Build debug APK: `./gradlew :app:assembleDebug` (output `app/build/outputs/apk/debug/app-debug.apk`)
 - Install on the phone and start: `./gradlew :app:installDebug && adb shell am start -n dev.r2d8.weather/.MainActivity`
+- Phone screenshots for checking the UI: `adb exec-out screencap -p > file.png` (the phone must be unlocked; look at a screenshot before tapping, and never answer system permission dialogs for the user)
 - Check the phone is connected: `adb devices` (must say `device`, not `unauthorized`)
 - Unit tests: `./gradlew :app:testDebugUnitTest`
 - Lint: `./gradlew :app:lintDebug`

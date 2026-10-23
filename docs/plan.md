@@ -2,7 +2,7 @@
 
 Ad-free Android weather app for personal use, with a rain/snow radar served by a backend on the home server.
 
-**Status (2026-10-23):** Phases 0 and 1 are done. The app builds with `./gradlew` and runs on the Galaxy A32 (hello-world, dark mode, dynamic colours). Next: **Phase 2 (core weather)**. Server notes are in [server.md](server.md).
+**Status (2026-10-24):** Phases 0 to 3 are done, including the forecast redesign (Phase 2b), checked on the phone. Next: **Phase 4** (radar backend on the home server). Server notes are in [server.md](server.md).
 
 **Starting a new session:** `CLAUDE.md` is loaded automatically and points here. Read this plan and `server.md`, then continue with the current phase.
 
@@ -15,6 +15,11 @@ Ad-free Android weather app for personal use, with a rain/snow radar served by a
 | Min / target Android | Min **API 33 (Android 13)**, which is the test phone. Target the latest stable API (compileSdk/targetSdk 37). |
 | App id / structure | `dev.r2d8.weather`, single module `:app`, Kotlin sources in `app/src/main/kotlin`. |
 | Architecture / DI | MVVM (ViewModel + StateFlow), coroutines, **manual DI** (an `AppContainer` in the Application class, no Hilt). Libraries are added in the phase that needs them: Retrofit/OkHttp + kotlinx.serialization, Room, DataStore, Navigation Compose, MapLibre. No Play Services, Firebase or analytics. |
+| Forecast model | Open-Meteo default **best match** (automatic blend of regional models, high resolution over Italy). No model picker for now. |
+| Icons | Google Material Symbols as vector drawables in `res/drawable` (`ic_*.xml`, Apache 2.0, credited in the About screen), tinted by Compose. |
+| Places | The main screen shows either the phone's location (default) or one saved place, chosen in a drop-down in the top bar. Saved places are managed on a Places screen. `Place.Rome` is only used by tests. |
+| Settings | Stored in a Preferences DataStore. Covers theme mode, colour palette, which main-screen sections and which detail cards are shown. Unit settings were left out (metric only). |
+| Libraries in use | Retrofit 3 + OkHttp 5 + kotlinx.serialization, Room 2.8 (via KSP), DataStore Preferences 1.3, Navigation Compose, lifecycle-viewmodel-compose, coroutines. MapLibre comes in Phase 5. |
 | Build versions (2026-10-23) | Gradle 9.8.2, AGP 9.4.1 (built-in Kotlin), Kotlin 2.4.21, Compose BOM 2026.09.00, all in `gradle/libs.versions.toml`. |
 | Test device | Samsung Galaxy A32, Android 13, USB debugging |
 | Region | Italy / Europe first |
@@ -73,18 +78,57 @@ No accounts or API keys are needed (Open-Meteo, DPC, RainViewer free tier). Disk
 - Decisions (confirmed 2026-10-23, see the Decisions table): application id `dev.r2d8.weather`, single module, MVVM + StateFlow, manual DI, and the library list above, added per phase.
 - Done when: app installs and starts on the phone, builds from the command line with `./gradlew`, CLAUDE.md "Commands" section filled in. *(All met: debug install on the phone, `assembleDebug`, `assembleRelease`, `lintDebug` and `testDebugUnitTest` verified.)*
 
-## Phase 2 – Core weather
+## Phase 2 – Core weather (done 2026-10-24)
 
-- Open-Meteo client (forecast + air quality + geocoding), models and mappers, WMO weather codes to icons and text.
-- Main screen: current conditions, 15-minute rain-in-next-hour summary, hourly and daily forecast, detail cards (wind and gusts, UV, sunrise/sunset, humidity, pressure, air quality, pollen).
-- Caching in Room, last-known data when offline, loading and error states, pull to refresh, attribution screen (Open-Meteo CC BY 4.0).
+- Open-Meteo client (forecast + air quality + geocoding), models and mappers, WMO weather codes to icons and text. *(Done; the geocoding client is used by the Phase 3 city search.)*
+- Main screen: current conditions, 15-minute rain-in-next-hour summary, hourly and daily forecast, detail cards (wind and gusts, UV, sunrise/sunset, humidity, pressure, air quality, pollen). *(Done, functional Material 3 look; polish and themes are Phase 3.)*
+- Caching in Room, last-known data when offline, loading and error states, pull to refresh, attribution screen (Open-Meteo CC BY 4.0). *(Done.)*
 - Done when: correct data for the current location matches the Open-Meteo website, and works offline with cached data.
 
-## Phase 3 – Locations, settings, look
+### How it works (for later phases)
 
-- GPS location via the platform `LocationManager` (no Play Services), saved places, city search (Open-Meteo geocoding), reorder and delete places.
-- Settings screen: switch each detail card on/off, light/dark/system mode, colour themes (Material 3 dynamic colour on Android 12+ plus a few fixed palettes). Units stay metric but are stored as settings so they can be added later.
-- Done when: all toggles persist and change the main screen immediately.
+- **Code layout** (`dev.r2d8.weather`): `data/remote` (Retrofit interfaces and DTOs), `data/local` (Room), `data/WeatherRepository` + `Mappers`, `domain` (app models, rain nowcast, category bands), `ui/weather` (screen, cards, ViewModel), `ui/about`, `AppContainer` (manual DI).
+- **Requests:** `timeformat=unixtime` and `timezone=auto`, so times are epoch seconds and the response names the location's zone. Forecast: current, 15-minute precipitation (16 slots), hourly and 10 daily values. Air quality (EAQI, PM, pollen) is a separate request; if it fails, the forecast still loads and the cached air quality is kept.
+- **Cache:** one Room row per place (coordinates rounded to 2 decimals) holding the raw JSON of both responses plus the download time. The UI only observes the cache; refresh writes to it. The app refreshes on start and on resume if the cache is older than 10 minutes, and always on pull-to-refresh. Unreadable cached JSON is treated as empty.
+- **Rain in the next hour:** Open-Meteo precipitation values describe the **preceding** 15 minutes, so a slot at time T covers (T-15 min, T]. A slot counts as rain from 0.1 mm (about 0.4 mm/h); intensity bands are light under 2.5 mm/h, moderate under 7.6, heavy above.
+- **Bands:** UV by WHO, air quality by the European AQI, pollen with simple generic bands (real thresholds differ per species, so the number is shown too). Pollen is hidden where the API returns no pollen data.
+- **Detail cards** are listed in the `DetailCardType` enum (in `domain/AppSettings.kt`); the main screen shows the ones enabled in settings.
+- **Tests:** domain logic, mappers (real sample responses in `app/src/test/resources`) and the repository (mock HTTP server plus an in-memory fake DAO).
+- **Time handling gotchas:**
+  - Open-Meteo's `unixtime` **daily** timestamps step by exactly 24 h and ignore DST, so after a clock change they sit at 23:00 of the previous day. The mapper takes the first day's local date and counts up (found on the first device run: "Sun 25" appeared twice around the 25 Oct 2026 change; there is a regression test). Hourly and 15-minute timestamps are real instants and are fine.
+  - Times for a place (hours, sunrise) are shown in the **place's** zone; "Updated" and the offline banner use the **phone's** zone. The dev phone is set to Europe/Helsinki while the test place is Rome, which is how this showed up.
+- **Checked on the phone (2026-10-24):** loads and caches, refresh on start/resume, pull to refresh, offline banner with cached data (airplane mode). Values come straight from the API and were not compared side by side with the Open-Meteo website.
+
+## Phase 2b – Forecast redesign (done 2026-10-24)
+
+Requested after Phase 2: hourly detail like 3bmeteo, with each of the 10 days expandable into hours. 3bmeteo's web page was used as inspiration only (no assets copied): day-part cards (night/morning/afternoon/evening) and an hourly table. No screenshots of their app were available.
+
+- Top 24-hour strip stays as it was.
+- **10-day list:** each row shows day, max rain chance (hidden under 10%), icon, min and max. Tap a row to expand it inline (one open at a time, state survives rotation). Today shows only the hours still to come.
+- **Expanded day:** four day-part cells (condition icon and text, min/max, rain total) and an hourly table with icon, temperature, rain in mm and rain chance. A day part shows its **most severe** condition (`ConditionKind.severity`) so a storm at 17:00 is not hidden by a sunny morning.
+- **Not included for now (chosen by the user):** wind, gusts, humidity, pressure, UV, snow line and freezing level per hour. Open-Meteo provides them if wanted later; the hourly data for all 10 days is already downloaded.
+- Code: `ui/weather/DailyForecast.kt`, `domain/DayParts.kt` (with tests).
+
+## Phase 3 – Locations, settings, look (done 2026-10-24)
+
+- GPS location via the platform `LocationManager` (no Play Services), saved places, city search (Open-Meteo geocoding), reorder and delete places. *(Done.)*
+- Settings screen: each detail card and each main-screen section on/off, light/dark/system mode, colour palette (dynamic Material You plus Blue, Green, Orange, Purple). *(Done. Units were left out on purpose.)*
+- Done when: all toggles persist and change the main screen immediately. *(Checked on the phone: palette, mode and a section toggle applied at once.)*
+
+### How it works (for later phases)
+
+- **Choosing the place:** `PlaceSelection` is `Gps` or `Saved(id)`, stored in settings. If a selected saved place is deleted the selection falls back to the phone's location. Adding a place from search saves it, selects it and returns to the main screen.
+- **Phone location:** `LocationProvider` asks for approximate or precise permission when "Current location" is shown. Network location is tried first (approximate is enough), then GPS, then the last known fix; the place name comes from the system `Geocoder` with "Current location" as fallback. The result is stored as `lastGpsPlace` so there is something to show while locating, and the lookup is repeated on resume after 5 minutes. States without a place: permission prompt (with "Choose a place instead") and a "couldn't find your location" screen.
+- **Privacy:** requests to Open-Meteo use coordinates rounded to 2 decimals (about 1 km), never the exact fix. Search queries go to Open-Meteo's geocoding service.
+- **Storage:** `saved_places` table in Room (database version 2, auto-migration from 1 keeps the weather cache); settings in a Preferences DataStore. Switches are stored as the set of things switched **off**, so new cards or sections appear by default.
+- **Theme:** the fixed palettes are generated from a hue (`ui/theme/Theme.kt`); light-theme accents darken themselves until they reach 4.6:1 contrast, and a unit test checks key pairs for all palettes. `MainActivity` waits for the stored theme before drawing so there is no flash of wrong colours, and sets the status/navigation bar icon style to match the app theme rather than the system's.
+- **Navigation:** routes `weather`, `places`, `settings`, `about`; About is reached from Settings.
+- **Search results:** rows with the same name and region are collapsed, and Italian matches are listed first (country code `IT`, the service's own order is kept within each group; 20 results are requested so Italian ones are not cut off). To change the preferred countries edit `PREFERRED_COUNTRIES` in `PlacesRepository`.
+- **Rain icon rule:** the WMO weather code can say "overcast" while the rain probability is high. For cloudy, partly cloudy and foggy hours, day parts and days with a rain probability of at least 50% (`RAIN_LIKELY_PERCENT` in `domain/WeatherCondition.kt`) the light-rain icon and the text "Chance of rain" are shown. Clear skies and real precipitation codes are never changed. The current-conditions card follows the observed code only.
+- **Time zones:** "Today" and "Tomorrow" follow the place's own calendar and the rows show the date underneath. When the place's UTC offset differs from the phone's, the current-conditions card adds "Local time HH:mm · weekday date". (The dev phone is on Helsinki time, so Italian places are still on the previous day for one hour after midnight.)
+- **App icon:** adaptive icon (sun behind a cloud on a blue gradient, plus a monochrome layer for Android 13 themed icons) in `res/drawable/ic_launcher_*.xml` and `res/mipmap-anydpi/ic_launcher.xml`.
+- **Known gaps:** the Places screen reorders with up/down buttons, not drag and drop.
+- **Dev notes:** the debug build is slow (a few frames per second on the A32 at times), which is normal for debug; try `assembleRelease` if performance matters. Lint passes without errors; remaining warnings are the missing icon, `allowBackup`, one long icon path and a state-type hint.
 
 ## Phase 4 – Radar backend (new project on the home server)
 
