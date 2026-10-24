@@ -290,9 +290,40 @@ Goal: keep the convenience of reaching the home server from the phone, while mak
 | Reliability | Reports of the Android app dropping every 10 to 20 minutes unless it is the system's always-on VPN or exempt from battery optimisation ([forum](https://forum.tailscale.com/t/android-constantly-stopping/4689)). | Not observed (connected the whole charge cycle). |
 | Lost phone | Official guidance: nodes re-authenticate every 180 days by default, keep key expiry on, remove the device in the admin console, use least-privilege access rules, auto-update clients ([Tailscale security best practices](https://tailscale.com/kb/1196/security)). Access rules are deny-by-default once defined ([grants syntax](https://tailscale.com/kb/1538/grants-syntax)). | Not checked: the user has not shown the tailnet policy or the phone's key-expiry setting. |
 
-**Also to check:** a ping from the phone to the server over Tailscale took about 390 ms; look at `tailscale status` on the PC and the phone to see whether the connection is direct or relayed (a relayed path is slower, not less safe).
+**Checked 2026-10-24 (read-only):**
+- Tailnet devices: `r2d8-laptop` 100.86.74.124 (key expires 2027-03-16), `A32 di Lorenzo` 100.125.5.80 (key expires **2026-11-11**: the phone will ask to log in to Tailscale again then), `red8` 100.95.20.125 (key expiry disabled, deliberately).
+- Paths (`tailscale ping`): phone to server **direct** (about 64 ms), laptop to phone direct, laptop to server **relayed** through Tailscale's Frankfurt relay (60-125 ms; slower, not less safe). The earlier 330-390 ms phone pings were relayed at the time.
+- The server listens for SSH on all interfaces (`0.0.0.0:22`, also the guest Wi-Fi), the radar only on the Tailscale address (`100.95.20.125:8080`). Password login and the firewall state need root to read.
+- **From the phone today:** port 8080 answers (`HTTP/1.0 200 OK`) and so does the server's SSH (`SSH-2.0-OpenSSH_9.6p1`): the risk below is real. The laptop has no SSH server (connection refused).
+- Phone probes use Android's `nc` without `-z`: `adb shell 'printf "GET /health HTTP/1.0\r\n\r\n" | timeout 5 nc 100.95.20.125 8080 | head -1'` and `adb shell 'timeout 5 nc 100.95.20.125 22 </dev/null | head -1'`.
 
-**Risks in this setup:** (1) as far as the plan knows the tailnet still has the default policy that lets every device reach every other, so the phone could reach the server's SSH port (port 22 is open on the Tailscale interface); (2) SSH password login is still enabled on the server and `r2d8` is a sudoer; (3) Android allows one VPN at a time; (4) the server's own key expiry is disabled (deliberately, for availability).
+**Earlier note:** a ping from the phone to the server over Tailscale took about 390 ms; look at `tailscale status` on the PC and the phone to see whether the connection is direct or relayed (a relayed path is slower, not less safe).
+
+**Done 2026-10-24:**
+- **Work item 1-2, access rules.** The tailnet had the default allow-all policy. Replaced (by the user, in the admin console) with this policy; the old one is the default "allow all" plus Funnel for members:
+
+  ```jsonc
+  {
+    "hosts": {"laptop": "100.86.74.124", "red8": "100.95.20.125", "phone": "100.125.5.80"},
+    "grants": [
+      {"src": ["laptop"], "dst": ["*"], "ip": ["*"]},
+      {"src": ["phone"], "dst": ["red8"], "ip": ["tcp:8080"]},
+    ],
+    "ssh": [{"action": "check", "src": ["autogroup:member"], "dst": ["autogroup:self"], "users": ["autogroup:nonroot", "root"]}],
+    // "nodeAttrs" with Funnel: commented out (not used)
+    "tests": [
+      {"src": "laptop", "accept": ["red8:22", "red8:8080", "phone:5555"]},
+      {"src": "phone", "accept": ["red8:8080"], "deny": ["red8:22", "red8:80", "laptop:22"]},
+    ],
+  }
+  ```
+
+  Verified from the phone: `/health` on 8080 answers and the radar works in the app (server frames and forecast); port 22 no longer answers; the laptop is unreachable. The laptop still reaches the server's SSH; the server cannot reach the phone. Ping from the phone still works (Tailscale lets ICMP through to devices you may reach at all). Grants also control plain OpenSSH; the `ssh` section only concerns Tailscale SSH, which is not used.
+- **Work item 3, SSH password login off** (script run by the user with sudo, 10-minute self-revert timer, confirmed and made permanent): see [server.md](server.md).
+
+**Still open:** work items 4 (lost-phone procedure; the phone's key expires 2026-11-11), 5 (a week of data and battery numbers), 6 (optional app notice when the server is unreachable).
+
+**Risks in this setup (as found before the work above):** (1) as far as the plan knows the tailnet still has the default policy that lets every device reach every other, so the phone could reach the server's SSH port (port 22 is open on the Tailscale interface); (2) SSH password login is still enabled on the server and `r2d8` is a sudoer; (3) Android allows one VPN at a time; (4) the server's own key expiry is disabled (deliberately, for availability).
 
 **Work:**
 1. Read the current tailnet policy and device list together with the user (the user pastes the policy file from the admin console; Claude never changes the Tailscale setup remotely).

@@ -6,6 +6,8 @@ Always-on old laptop that hosts the radar backend (Phase 4 of [plan.md](plan.md)
 
 - **Hardware/OS:** HP laptop, Intel i5-6200U (4 threads), 7.6 GB RAM, 238 GB SSD (LVM root 100 GB, about 135 GB unallocated), Ubuntu Server 24.04.5 LTS (supported to 2029).
 - **Network:** Wi-Fi only, on the router's **guest** network `FRITZ! Guest` (intentional). Tailscale IP `100.95.20.125`, key expiry disabled. Ethernet port exists, no cable.
+- **SSH (hardened 2026-10-24):** key login only. `/etc/ssh/sshd_config.d/10-no-password.conf` sets `PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `PermitRootLogin no` (it sorts before Ubuntu's `50-cloud-init.conf`, so it wins). Checked: key login works, password login answers `Permission denied (publickey)`. To undo: delete that file (new connections read the config). Losing the laptop's SSH key now means going to the server physically.
+- **Tailnet access rules (2026-10-24):** deny by default; the laptop (`100.86.74.124`) may reach everything, the phone (`100.125.5.80`) only `red8` on `tcp:8080`; tests in the policy refuse a save that breaks this; Funnel is off. Edited by the user in the admin console (Access controls, JSON editor), never by Claude. Checked from the phone: 8080 answers, port 22 and the laptop do not; the laptop still reaches SSH; the server cannot open connections to the phone. A new device gets no access until a rule (and a `hosts` entry) is added for it; a device that is removed and added again gets a new address, which must be updated in `hosts`. The full policy is in [plan.md](plan.md), Phase 7.
 - **Users/sudo:** only `r2d8`. Sudo needs a password; no temporary rules remain. `r2d8` is in the `docker` group (root-equivalent).
 - **Firewall (ufw):** active, default deny incoming, only port 22 allowed.
 - **Docker:** Docker CE 29.x and compose plugin from Docker's apt repo, log rotation set (`local` driver, 10 MB x 3), compose projects go in `/srv/stacks/<service>/` (`compose.yaml`, data in `./data`).
@@ -23,7 +25,7 @@ Always-on old laptop that hosts the radar backend (Phase 4 of [plan.md](plan.md)
 
 - **Reboot (done 2026-10-24):** kernel 6.8.0-147 now running, no reboot pending, Docker, Tailscale and the radar container came back by themselves (about a minute). `ssh.service` shows disabled because Ubuntu 24.04 starts SSH through `ssh.socket`, which is enabled; that is normal. A reboot over SSH works (`ssh -t r2d8@red8 'sudo reboot'`, needs the sudo password, so the user runs it); the only risk is the laptop not rejoining Wi-Fi/Tailscale, which needs physical access.
 - **Radar backend 24 h check:** confirm `docker logs weather-radar` shows no errors and `/health` is `ok` a day after the reboot.
-- Optional hardening (with revert timers): `ufw allow in on tailscale0`, turn off SSH password login (key login works).
+- Optional hardening (with revert timers): `ufw allow in on tailscale0`. (SSH password login: off since 2026-10-24.)
 - Check/disable Wi-Fi power saving (`iw` is not installed).
 
 ## Later
