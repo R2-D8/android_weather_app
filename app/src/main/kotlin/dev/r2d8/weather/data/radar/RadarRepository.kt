@@ -24,6 +24,11 @@ sealed interface ServerTestResult {
  */
 class RadarRepository(
     private val rainViewer: RainViewerApi,
+    /**
+     * Whether this app's traffic goes through a VPN (Tailscale) right now; null if unknown. Only
+     * used to explain why the home server could not be reached.
+     */
+    private val vpnActive: () -> Boolean? = { null },
     /** Builds a client for a normalised server base URL (with short time limits). */
     private val serverApi: (baseUrl: String) -> HomeServerApi,
 ) {
@@ -48,10 +53,17 @@ class RadarRepository(
             // The server answers 503 from /health while it is starting or when its frames are stale.
             ServerTestResult.Problem("Reached the server, but it is not ready (HTTP ${e.code()}).")
         } catch (e: java.io.IOException) {
-            ServerTestResult.Problem("Could not reach the server. Is Tailscale on? (${e.javaClass.simpleName})")
+            ServerTestResult.Problem("${unreachableReason()} (${e.javaClass.simpleName})")
         } catch (e: kotlinx.serialization.SerializationException) {
             ServerTestResult.Problem("That address answered, but it does not look like the radar server.")
         }
+    }
+
+    /** Why the server did not answer, as far as the phone can tell. */
+    private fun unreachableReason(): String = when (vpnActive()) {
+        false -> "Tailscale is off on this phone: turn it on to use your home server."
+        true -> "The home server is not answering. Tailscale is on, so the server may be down or restarting."
+        null -> "Home server not reachable (is Tailscale on?)."
     }
 
     private sealed interface ServerAttempt {
@@ -64,7 +76,7 @@ class RadarRepository(
         if (problem != null) return ServerAttempt.Skipped("Home server not used: $problem")
         val base = checkNotNull(ServerAddress.normalize(settings.homeServerAddress))
         val api = serverApi(base)
-        val unreachable = ServerAttempt.Skipped("Home server not reachable (is Tailscale on?). Showing RainViewer.")
+        val unreachable = ServerAttempt.Skipped("${unreachableReason()} Showing RainViewer.")
 
         val covered = runCatchingCancellable { api.coverage(place.latitude, place.longitude) }
             .getOrElse { return unreachable }

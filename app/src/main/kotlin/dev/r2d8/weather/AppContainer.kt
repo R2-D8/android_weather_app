@@ -76,6 +76,7 @@ class AppContainer(context: Context) {
             .addConverterFactory(converter)
             .build()
             .create(RainViewerApi::class.java),
+        vpnActive = networkMonitor::isVpnActive,
         serverApi = { baseUrl ->
             Retrofit.Builder()
                 .baseUrl(baseUrl)

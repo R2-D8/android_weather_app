@@ -2,7 +2,7 @@
 
 Ad-free Android weather app for personal use, with a rain/snow radar served by a backend on the home server.
 
-**Status (2026-10-24):** Phases 0 to 3 are done, including the forecast redesign (Phase 2b), checked on the phone. **Phase 5** (map and radar in the app) is done and checked on the phone, except the mobile-data path (the phone's mobile data is off; covered by unit tests only). Open: the 24 h soak check of the radar backend. Phase 4b (radar for Finland) is dropped; Phase 5b (radar forecast and offline maps) is built in the app: offline maps and forecast frames are checked on the phone; Open-Meteo data was tested as a nowcast input and did not help (see Phase 5b). Next: Phase 7 (Tailscale security), then model forecast frames (DWD ICON); Phase 6 is the stretch list. Server notes are in [server.md](server.md).
+**Status (2026-10-24):** Phases 0 to 3 are done, including the forecast redesign (Phase 2b), checked on the phone. **Phase 5** (map and radar in the app) is done and checked on the phone, except the mobile-data path (the phone's mobile data is off; covered by unit tests only). Open: the 24 h soak check of the radar backend. Phase 4b (radar for Finland) is dropped; Phase 5b (radar forecast and offline maps) is built in the app: offline maps and forecast frames are checked on the phone; Open-Meteo data was tested as a nowcast input and did not help (see Phase 5b). Phase 7 (Tailscale security) is done. Next: model forecast frames (DWD ICON); Phase 6 is the stretch list. Server notes are in [server.md](server.md).
 
 **Starting a new session:** `CLAUDE.md` is loaded automatically and points here. Read this plan and `server.md`, then continue with the current phase.
 
@@ -277,7 +277,7 @@ Project: `~/Desktop/projects/weather-radar` (own git repo, public on GitHub at h
 
 Rain vs snow colours for DPC, notifications, home-screen widget, "rain starts in X minutes" from radar nowcast, severe-weather alerts. Server: Pi-hole, password manager, git server (see [server.md](server.md)).
 
-## Phase 7 – Tailscale security on the phone (last phase)
+## Phase 7 – Tailscale security on the phone (done 2026-10-24)
 
 Goal: keep the convenience of reaching the home server from the phone, while making a lost or compromised phone a small problem instead of a way into the server.
 
@@ -321,7 +321,15 @@ Goal: keep the convenience of reaching the home server from the phone, while mak
   Verified from the phone: `/health` on 8080 answers and the radar works in the app (server frames and forecast); port 22 no longer answers; the laptop is unreachable. The laptop still reaches the server's SSH; the server cannot reach the phone. Ping from the phone still works (Tailscale lets ICMP through to devices you may reach at all). Grants also control plain OpenSSH; the `ssh` section only concerns Tailscale SSH, which is not used.
 - **Work item 3, SSH password login off** (script run by the user with sudo, 10-minute self-revert timer, confirmed and made permanent): see [server.md](server.md).
 
-**Still open:** work items 4 (lost-phone procedure; the phone's key expires 2026-11-11), 5 (a week of data and battery numbers), 6 (optional app notice when the server is unreachable).
+- **Work item 6, app notice.** When the home server cannot be reached, the radar notice and "Test connection" now say which case it is, using whether this app's traffic goes through a VPN (`NetworkMonitor.isVpnActive`: the active network for the app has `TRANSPORT_VPN`): "Tailscale is off on this phone: turn it on to use your home server." or "The home server is not answering. Tailscale is on, so the server may be down or restarting." Unit-tested; checked on the phone with Tailscale on (port 8081, which the policy blocks, gave the second message; the address was put back to 8080 afterwards). The "Tailscale is off" case was not tried on the phone.
+- **Work item 4, lost-phone procedure** (written, not practised):
+  1. From any browser, open https://login.tailscale.com/admin/machines and remove `A32 di Lorenzo` (or disable its key). From then on it cannot reach anything in the tailnet; even before that it can only reach the radar on port 8080.
+  2. Lock or wipe the phone with Samsung Find My Mobile or Google Find My Device.
+  3. A new or returning phone gets a new Tailscale address: update `"phone"` in the policy's `hosts` (the tests will then pass again).
+  - The phone's Tailscale key expires on **2026-11-11** (180 days after login); Tailscale asks to log in again then. Keep key expiry on for the phone, and keep a screen lock.
+- **Work item 5 (a week of battery and data numbers): dropped by the user.** The table keeps the one-day measurement.
+
+**Phase 7 is done** apart from the optional practice run of the lost-phone steps.
 
 **Risks in this setup (as found before the work above):** (1) as far as the plan knows the tailnet still has the default policy that lets every device reach every other, so the phone could reach the server's SSH port (port 22 is open on the Tailscale interface); (2) SSH password login is still enabled on the server and `r2d8` is a sudoer; (3) Android allows one VPN at a time; (4) the server's own key expiry is disabled (deliberately, for availability).
 

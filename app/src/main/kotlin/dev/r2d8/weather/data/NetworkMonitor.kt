@@ -16,6 +16,16 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 class NetworkMonitor(context: Context) {
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
 
+    /**
+     * True if this app's traffic currently goes through a VPN such as Tailscale. Android hands
+     * each app the network it should use, and while a VPN covers the app that is the VPN, so
+     * this is false when Tailscale is off (or set to leave this app out).
+     */
+    fun isVpnActive(): Boolean {
+        val network = connectivity.activeNetwork ?: return false
+        return connectivity.getNetworkCapabilities(network)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true
+    }
+
     /** Emits the current state first, then every change. */
     val isMetered: Flow<Boolean> = callbackFlow {
         val callback = object : ConnectivityManager.NetworkCallback() {

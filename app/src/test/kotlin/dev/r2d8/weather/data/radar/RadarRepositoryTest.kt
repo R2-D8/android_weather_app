@@ -151,6 +151,26 @@ class RadarRepositoryTest {
     }
 
     @Test
+    fun `the notice tells whether Tailscale is off or the server is down`() = runTest {
+        server.failure = IOException("timeout")
+        var vpn: Boolean? = false
+        val repo = RadarRepository(rainViewer, vpnActive = { vpn }) { server }
+
+        val off = repo.load(place, serverOn).getOrThrow()
+        assertEquals(RadarSourceKind.RainViewer, off.source)
+        assertTrue(off.notice!!, off.notice!!.contains("Tailscale is off"))
+
+        vpn = true
+        val down = repo.load(place, serverOn).getOrThrow()
+        assertTrue(down.notice!!, down.notice!!.contains("not answering"))
+
+        server.healthFailure = IOException("unreachable")
+        vpn = false
+        val test = repo.testServer("100.95.20.125:8080") as ServerTestResult.Problem
+        assertTrue(test.message, test.message.contains("Tailscale is off"))
+    }
+
+    @Test
     fun `a server without frames falls back to RainViewer`() = runTest {
         server.frameIds = emptyList()
         val layers = repository.load(place, serverOn).getOrThrow()
