@@ -33,5 +33,5 @@ Run from the project root (needs `ANDROID_HOME`, see above):
 - Check the phone is connected: `adb devices` (must say `device`, not `unauthorized`)
 - Unit tests: `./gradlew :app:testDebugUnitTest`
 - Lint: `./gradlew :app:lintDebug`
-- Release APK (signed with the debug key, for sideloading): `./gradlew :app:assembleRelease`
+- Release APK to share (signed with the app's release key, 64-bit ARM only): `./gradlew :app:assembleRelease`, output `app/build/outputs/apk/release/app-release.apk`. The key is `~/.android-keys/weather-release.jks`, its passwords are in the user-level `~/.gradle/gradle.properties` (`weatherRelease*`); never put either in the project. Without them the APK comes out unsigned. Raise `versionCode` for every shared update, or it will not install over the old one.
 - Logs from the phone: `adb logcat --pid=$(adb shell pidof dev.r2d8.weather)`
