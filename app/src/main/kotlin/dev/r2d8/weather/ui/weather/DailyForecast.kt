@@ -27,6 +27,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import dev.r2d8.weather.R
+import dev.r2d8.weather.domain.DayDetail
 import dev.r2d8.weather.domain.DayForecast
 import dev.r2d8.weather.domain.DayPartSummary
 import dev.r2d8.weather.domain.DayParts
@@ -45,9 +46,12 @@ private const val NONE_OPEN = Long.MIN_VALUE
 
 private val dayFormat = DateTimeFormatter.ofPattern("EEE d", Locale.ENGLISH)
 
-/** The multi-day list. Tap a day to see its day parts and hour-by-hour values; one day is open at a time. */
+/**
+ * The multi-day list. Tap a day to see its day parts and hour-by-hour values ([details] says which);
+ * one day is open at a time. With no details switched on, days do not expand.
+ */
 @Composable
-fun DailyCard(report: WeatherReport, now: Instant) {
+fun DailyCard(report: WeatherReport, now: Instant, details: Set<DayDetail>) {
     val today = now.atZone(report.zone).toLocalDate()
     val days = remember(report, now) { report.days.filter { it.date >= today } }
     // Saved across rotation; LocalDate is stored as its epoch day.
@@ -57,10 +61,14 @@ fun DailyCard(report: WeatherReport, now: Instant) {
         Column {
             days.forEachIndexed { index, day ->
                 if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                val expanded = openDay == day.date.toEpochDay()
-                DayRow(day, today, expanded, onClick = { openDay = if (expanded) NONE_OPEN else day.date.toEpochDay() })
+                val expandable = details.isNotEmpty()
+                val expanded = expandable && openDay == day.date.toEpochDay()
+                DayRow(
+                    day, today, expanded,
+                    onClick = if (expandable) ({ openDay = if (expanded) NONE_OPEN else day.date.toEpochDay() }) else null,
+                )
                 AnimatedVisibility(visible = expanded) {
-                    DayDetail(report, day, now)
+                    DayDetails(report, day, now, details)
                 }
             }
         }
@@ -68,10 +76,12 @@ fun DailyCard(report: WeatherReport, now: Instant) {
 }
 
 @Composable
-private fun DayRow(day: DayForecast, today: LocalDate, expanded: Boolean, onClick: () -> Unit) {
+private fun DayRow(day: DayForecast, today: LocalDate, expanded: Boolean, onClick: (() -> Unit)?) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(vertical = 12.dp),
     ) {
         Column(Modifier.weight(1f)) {
             val relative = when (day.date) {
@@ -111,30 +121,36 @@ private fun DayRow(day: DayForecast, today: LocalDate, expanded: Boolean, onClic
             textAlign = TextAlign.End,
             style = MaterialTheme.typography.titleSmall,
         )
-        Icon(
-            painter = painterResource(if (expanded) R.drawable.ic_expand_less else R.drawable.ic_expand_more),
-            contentDescription = if (expanded) "Collapse" else "Expand hourly forecast",
-            modifier = Modifier.padding(start = 4.dp).size(20.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (onClick != null) {
+            Icon(
+                painter = painterResource(if (expanded) R.drawable.ic_expand_less else R.drawable.ic_expand_more),
+                contentDescription = if (expanded) "Collapse" else "Expand day",
+                modifier = Modifier.padding(start = 4.dp).size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            // Keeps the columns aligned with the expandable layout.
+            Spacer(Modifier.width(24.dp))
+        }
     }
 }
 
 @Composable
-private fun DayDetail(report: WeatherReport, day: DayForecast, now: Instant) {
+private fun DayDetails(report: WeatherReport, day: DayForecast, now: Instant, details: Set<DayDetail>) {
     // For today only the hours still to come; other days show all 24.
     val hours = remember(report, day, now) {
         DayParts.hoursOf(report.hours, day.date, report.zone, from = now.truncatedTo(ChronoUnit.HOURS))
     }
     val parts = remember(hours) { DayParts.summarize(hours, report.zone) }
     Column(Modifier.padding(bottom = 12.dp)) {
-        if (parts.isNotEmpty()) {
+        val showHourly = DayDetail.Hourly in details
+        if (DayDetail.DayParts in details && parts.isNotEmpty()) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 parts.forEach { DayPartCell(it, Modifier.weight(1f)) }
             }
-            Spacer(Modifier.height(12.dp))
+            if (showHourly) Spacer(Modifier.height(12.dp))
         }
-        HourTable(hours, report.zone)
+        if (showHourly) HourTable(hours, report.zone)
     }
 }
 

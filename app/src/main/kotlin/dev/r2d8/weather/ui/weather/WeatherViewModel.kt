@@ -18,6 +18,7 @@ import dev.r2d8.weather.domain.Place
 import dev.r2d8.weather.domain.PlaceSelection
 import dev.r2d8.weather.domain.SavedPlace
 import dev.r2d8.weather.domain.WeatherReport
+import dev.r2d8.weather.domain.resolvePlace
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
@@ -71,7 +72,7 @@ class WeatherViewModel(
 
     /** The selected place resolved to coordinates; changes when the user switches or the phone moves. */
     private val currentPlace: Flow<Place?> = combine(settingsRepository.settings, placesRepository.places) { settings, saved ->
-        resolve(settings, saved)
+        resolvePlace(settings, saved)
     }
 
     val uiState: StateFlow<WeatherUiState> = combine(
@@ -85,7 +86,7 @@ class WeatherViewModel(
         WeatherUiState(
             settings = settings,
             savedPlaces = saved,
-            place = resolve(settings, saved),
+            place = resolvePlace(settings, saved),
             usingGps = selectedSaved == null,
             selectedSavedId = selectedSaved?.id,
             report = report,
@@ -95,10 +96,6 @@ class WeatherViewModel(
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), WeatherUiState())
 
-    /** A saved selection whose place was deleted falls back to the phone's location. */
-    private fun resolve(settings: AppSettings, saved: List<SavedPlace>): Place? =
-        (settings.selection as? PlaceSelection.Saved)?.let { sel -> saved.firstOrNull { it.id == sel.id }?.place }
-            ?: settings.lastGpsPlace
 
     /** Refreshes unless the cache is fresh. [force] is for pull-to-refresh and also re-checks the location. */
     fun refresh(force: Boolean = false) = startRefresh(force = force, restart = false)

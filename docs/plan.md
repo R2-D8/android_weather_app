@@ -2,7 +2,7 @@
 
 Ad-free Android weather app for personal use, with a rain/snow radar served by a backend on the home server.
 
-**Status (2026-10-24):** Phases 0 to 3 are done, including the forecast redesign (Phase 2b), checked on the phone. **Phase 4** (radar backend) is deployed and waiting for its reboot and 24 h checks. Next: **Phase 5** (map and radar in the app). Phase 4b (radar for Finland) is postponed; Phase 7 (Tailscale security on the phone) is the last phase. Server notes are in [server.md](server.md).
+**Status (2026-10-24):** Phases 0 to 3 are done, including the forecast redesign (Phase 2b), checked on the phone. **Phase 5** (map and radar in the app) is done and checked on the phone, except the mobile-data path (the phone's mobile data is off; covered by unit tests only). Open: the 24 h soak check of the radar backend. Phase 4b (radar for Finland) is dropped; Phase 5b (radar forecast and offline maps) is built in the app: offline maps and forecast frames are checked on the phone; Open-Meteo data was tested as a nowcast input and did not help (see Phase 5b). Next: Phase 7 (Tailscale security), then model forecast frames (DWD ICON); Phase 6 is the stretch list. Server notes are in [server.md](server.md).
 
 **Starting a new session:** `CLAUDE.md` is loaded automatically and points here. Read this plan and `server.md`, then continue with the current phase.
 
@@ -20,7 +20,7 @@ Ad-free Android weather app for personal use, with a rain/snow radar served by a
 | Forecast model | Open-Meteo default **best match** (automatic blend of regional models, high resolution over Italy). No model picker for now. |
 | Icons | Google Material Symbols as vector drawables in `res/drawable` (`ic_*.xml`, Apache 2.0, credited in the About screen), tinted by Compose. |
 | Places | The main screen shows either the phone's location (default) or one saved place, chosen in a drop-down in the top bar. Saved places are managed on a Places screen. `Place.Rome` is only used by tests. |
-| Settings | Stored in a Preferences DataStore. Covers theme mode, colour palette, which main-screen sections and which detail cards are shown. Unit settings were left out (metric only). |
+| Settings | Stored in a Preferences DataStore. Covers theme mode, colour palette, which main-screen sections and which detail cards are shown, and what an expanded day shows (night/morning/afternoon/evening and hour by hour, each switchable, both on by default; with both off, days do not expand). Unit settings were left out (metric only). |
 | Libraries in use | Retrofit 3 + OkHttp 5 + kotlinx.serialization, Room 2.8 (via KSP), DataStore Preferences 1.3, Navigation Compose, lifecycle-viewmodel-compose, coroutines. MapLibre comes in Phase 5. |
 | Build versions (2026-10-23) | Gradle 9.8.2, AGP 9.4.1 (built-in Kotlin), Kotlin 2.4.21, Compose BOM 2026.09.00, all in `gradle/libs.versions.toml`. |
 | Test device | Samsung Galaxy A32, Android 13, USB debugging |
@@ -30,7 +30,9 @@ Ad-free Android weather app for personal use, with a rain/snow radar served by a
 | Priorities | 1) correct forecast, 2) rain and snow radar. No satellite cloud imagery. |
 | Weather details | Rain-in-next-hour, wind and gusts, UV, sunrise/sunset, humidity, pressure, air quality and pollen. **Every detail can be switched on/off in settings.** |
 | Look | Light/dark/system mode and colour themes. |
-| Map | MapLibre. Normal map: **OpenFreeMap** (vector, no key, styles liberty/bright/positron/dark). Satellite: **EOX Sentinel-2 cloudless** raster tiles. The user can switch between normal and satellite view. |
+| Map | MapLibre. Normal map: **OpenFreeMap** vector styles, chosen in Settings > Map style: **Detailed** (liberty, the default), Bright, Light (positron), Dark. Satellite: **EOX Sentinel-2 cloudless** imagery **with the Detailed style's labels, roads and borders on top** (city and village names, regions, road names and shields, borders). The user switches between map and satellite on the radar screen; the choice is remembered. |
+| Radar screen | A full-screen map opened from a radar button in the weather screen's top bar; it shows the selected place with a marker. Map: MapLibre **native SDK 13.7.1** in an `AndroidView` (the `maplibre-compose` wrapper is 0.x and its docs say the API is not stable). |
+| Radar and mobile data | Radar history is **off on metered connections** (mobile data, metered Wi-Fi) unless Settings > "Load radar history on mobile data" is on (default off). Even with it on, on a metered connection history loads only when the user presses Play ("Play loads the last 2 hours (about N MB)"), and "Load once" overrides it for one visit. On Wi-Fi all frames load at once so playing is smooth. |
 | Not planned for now | Home-screen widget, rain/snow notifications (can be added later). |
 | Radar | **RainViewer is the built-in default** (works for everyone, zoom 7, ~2 h history, credit shown). The **home-server backend** (Italian DPC radar, sharper, longer history, reachable over Tailscale also away from home) is an optional upgrade that must be switched on in Settings. |
 | Backend | **Python**, written **from scratch** in a new project folder `~/Desktop/projects/weather-radar` (own git repository). The proof-of-concept was deleted on 2026-10-23, only its findings below remain. |
@@ -74,14 +76,17 @@ No accounts or API keys are needed (Open-Meteo, DPC, RainViewer free tier). Disk
 - **Two radar sources behind one screen:** RainViewer (built in, default, no setup) and the home server (optional, off by default, see Decisions). The app has a small `RadarSource` abstraction (frame list + tile URL template + attribution) so the map code does not care which one is active.
 - The **backend** runs in Docker on the home server, ingests DPC frames, keeps 6 hours of history, and serves tiles plus a frame list over HTTP. The app shows them as a raster layer over MapLibre. If the server is switched on but unreachable, the app falls back to RainViewer.
 - **Ingest:** the plan was to use the DPC WebSocket to learn about new frames, with a fallback check of `findLastProductByType` that downloads only when a new frame exists. No blind polling of the download endpoint. (Implemented as polling only, timed to when the next frame is due; see Phase 4.)
-- **API (backend):** `GET /frames` (frame ids = epoch seconds, oldest to newest), `GET /tiles/{frame}/{palette}/{z}/{x}/{y}.png`, `GET /palettes`, `GET /health`, `GET /attribution`. Frames are immutable once complete, so past-frame tiles are served with `Cache-Control: public, max-age=31536000, immutable`; only the newest frame gets a short cache.
+- **API (backend):** `GET /frames` (frame ids = epoch seconds, oldest to newest), `GET /tiles/{frame}/{palette}/{z}/{x}/{y}.png`, `GET /coverage?lat=&lon=` (is a point covered by the newest frame?), `GET /palettes`, `GET /health`, `GET /attribution`. Frames are immutable once complete, so past-frame tiles are served with `Cache-Control: public, max-age=31536000, immutable`; only the newest frame gets a short cache.
 - **Colours:** user-selectable, including for DPC. The backend renders with a named palette and caches tiles per palette; custom colour stops and the rain/snow colour split come later.
 - **Access:** only over Tailscale: the port is published on the Tailscale IP `100.95.20.125`, never on all interfaces. Android allows one VPN at a time, so Tailscale must stay on on the phone. Plain HTTP is fine because Tailscale encrypts the link; the app's network security config allows cleartext for that one address only. Fallbacks if Tailscale on the phone is a problem: Tailscale Funnel or a Cloudflare Tunnel with a token.
 - **Data budget (mobile data matters):**
   - Tiles are palette PNGs (a few KB each); fully empty tiles are one shared tiny image.
-  - The backend only serves up to about the native resolution (the DPC grid is 1 km, roughly zoom 8); the app **overzooms** beyond that instead of downloading finer tiles that contain no extra information. Tile size (256 or 512 px) is decided by measurement in Phase 5.
-  - The app loads only the newest frame at first and fetches older frames when the user presses play or drags the timeline; everything is cached on the phone, so a repeat view costs almost nothing.
-  - Target to verify in Phase 5: first full 2-hour animation of a regional view under about 1 MB, a cached repeat view close to 0. The forecast screen already uses compressed JSON and no background work.
+  - The backend only serves up to about the native resolution (the DPC grid is 1 km, roughly zoom 8); the app **overzooms** beyond that instead of downloading finer tiles that contain no extra information. Tiles are 256 px.
+  - Radar history is loaded lazily and cached; on a metered connection only when the user asks (see Decisions). The forecast screen uses compressed JSON and no background work.
+  - **Measured on the phone (Wi-Fi, empty map cache, regional view, 2026-10-24):** opening the radar the first time cost about **3.4 MB** in total with the home server and about **4.1 MB** with RainViewer. Of that, **roughly 3 MB is the vector basemap** (OpenFreeMap dark style: style, fonts, map tiles), which is cached afterwards (the map cache file was 3.2 MB). The 13 radar frames themselves cost **0.4 MB from the home server** (counted at the server's network interface) and **about 1.1 MB from RainViewer** (derived by difference; its tiles are 20 to 35 KB each). Playing the animation afterwards cost about 3 KB. A repeat view is nearly free. The app shows "about 2 MB" (RainViewer) or "about 1 MB" (server) before loading history on mobile data.
+  - **Map style data (first open, empty cache, same regional view, RainViewer frames included, 2026-10-24, one run each; Detailed twice with the same result):** Dark 4.3 MB, Bright 4.8 MB, Light 4.8 MB, **Detailed 6.1 MB**, satellite with labels 5.3 MB. Detailed costs about 1.8 MB more than Dark the first time and nothing more once cached. (An earlier four-style run was invalid because the app was still in satellite mode, which always uses the Detailed style; the basemap choice is remembered between visits.)
+  - Panning to a new area with all frames loaded fetches that area's tiles for every frame (several MB at once with RainViewer), which is why history on a metered connection waits for Play.
+  - Idea if the first-open cost matters: a lighter basemap style or lower maximum zoom; not done.
 
 ## Phase 1 – Project setup (done 2026-10-23)
 
@@ -166,30 +171,106 @@ Project: `~/Desktop/projects/weather-radar` (own git repo, public on GitHub at h
 - The phone reaches `/health` over Tailscale (user confirmed, 2026-10-24).
 - **Reboot test passed (2026-10-24):** the server came back on the new kernel 6.8.0-147 with no reboot pending; Tailscale had its address; the container (`restart: unless-stopped`) was up and healthy about a minute after boot with 0 restarts, and all 73 frames in the data volume survived.
 
-**Remaining:** the 24 h check (frames keep updating without errors). The clock restarted at the reboot (about 22:36 UTC on 23 Oct); look at `docker logs weather-radar` and `/health` (`last_error`, `downloaded_total`, newest frame age) after that. Nothing else blocks Phase 5.
+**Remaining:** the 24 h check (frames keep updating without errors). The clock restarted at the last redeploy (the `/coverage` endpoint, about 22:45 UTC on 23 Oct); look at `docker logs weather-radar` and `/health` (`last_error`, `downloaded_total`, newest frame age) after that. Nothing else blocks Phase 5.
 - Later: rain/snow split.
 
-## Phase 4b – Radar for places outside Italy (postponed by the user, 2026-10-24)
+## Phase 4b – Radar for places outside Italy (dropped by the user, 2026-10-24)
 
-**Decision:** not now. Turku keeps using RainViewer (works in Finland); the home server stays Italy-only. When this is picked up later, build it **before** the app depends on the server API for more than Italy, so the app is not rewritten. Everything below is the researched starting point.
+**Decision:** dropped, not planned. Places outside Italy (such as Turku) use RainViewer; the home server stays Italy-only. The FMI findings stay under research findings above; the backend design for it was removed from this plan and is in git history if ever needed.
 
-Why: the user studies in Turku for a while and saved it as a place; DPC covers Italy only, so the home-server radar shows nothing there (RainViewer still works). History cannot be kept "per saved place": a national radar mosaic covers a whole country, and the server would have to be told the user's places (which also leaks them). The workable design is **one source per region**, each stored in full.
-
-- Backend gets a `Source` abstraction (id, name, coverage bounds, frame step, ingest, grid, decode). Sources: `dpc` (Italy, exists) and `fmi` (Finland, new). `GET /sources` lists them with bounds; `/frames` and `/tiles/...` take the source id (`/{source}/frames`, `/{source}/tiles/{frame}/{palette}/{z}/{x}/{y}.png`; the current paths stay as aliases for `dpc` until the app uses the new ones). The app picks the source whose bounds contain the place, and falls back to RainViewer if none does or the server is off.
-- FMI ingest: list the bucket by the date prefix every few minutes, download new `finrad` files, keep 6 hours (72 frames, about 117 MB on disk, 31 MB decoded per frame in memory).
-- Rendering: same pipeline; the FMI grid is TM35FIN at 250 m, so the projection and cell size are per source. dBZ is converted to mm/h with Z = 200 R^1.6 so both sources share the same palettes and legend (documented as an approximation: it ignores snow and bright-band effects, which matters in Finnish winter).
-- Open questions: how much to trust the Z-R conversion for snow (a snow-specific relation or a dBZ legend for Finland); whether to add more sources later (Sweden, Estonia, OPERA).
-- Done when: the app shows a Finnish frame list for Turku from the server, tiles render in under 100 ms, 24 h of FMI frames are stored without errors, and Italian behaviour is unchanged.
-
-## Phase 5 – Radar in the app
+## Phase 5 – Radar in the app (done 2026-10-24; mobile-data path untested on a real mobile connection)
 
 - MapLibre map with a **normal / satellite switch**:
-  - Normal: OpenFreeMap vector tiles (`https://tiles.openfreemap.org/styles/liberty`, also `bright`, `positron`, `dark`; the dark style follows the app's dark mode). No key, no stated limits, donation-funded, no SLA, attribution "OpenFreeMap © OpenMapTiles Data from OpenStreetMap" (MapLibre shows it automatically).
-  - Satellite: EOX Sentinel-2 cloudless 2024 raster tiles (`https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/default/g/{z}/{y}/{x}.jpg`, tested up to zoom 16). 10 m/px, so blurry beyond about zoom 14. Free for personal non-commercial use (CC BY-NC-SA 4.0), attribution required: "EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2024)". Becomes a commercial licence if the app is ever monetised or distributed.
-  - Not chosen: Esri World Imagery (sharper, but a key and unclear third-party terms), OSM's own tile servers (not for app use), Mapbox/MapTiler (key and limits).
-- Radar overlay with animated past frames (last 2 hours by default), play/pause, timeline slider, opacity, legend, colour palette setting, attribution (Radar-DPC, RainViewer, map data). RainViewer works out of the box (zoom limit 7, overzoom). Past frames load lazily, see the data budget above.
-- **Settings > Home server** (new): a switch, **off by default**, an address field, **empty by default**, and a "Test connection" button. When off, the app never contacts the server. When on but unreachable, the radar falls back to RainViewer with a small notice. The only server-related thing compiled in is the cleartext exception for `100.95.20.125` in the network security config.
-- Done when: radar animates smoothly on the phone with RainViewer, and with the home server at home and away from home over Tailscale; a fresh install with default settings makes no request to the server; the measured data use meets the budget.
+  - Normal: OpenFreeMap vector styles (`https://tiles.openfreemap.org/styles/{liberty,bright,positron,dark}`), selectable in Settings (Detailed = liberty by default). No key, no stated limits, donation-funded, no SLA, attribution shown by MapLibre's (i) button.
+  - Satellite: EOX Sentinel-2 cloudless 2024 raster tiles (`https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/default/g/{z}/{y}/{x}.jpg`), source max zoom 14 (10 m/px, blurry beyond), **with labels**: the app loads the Detailed style, hides its land, water, building and shading layers, keeps all symbol layers except small points of interest and one-way arrows, keeps roads, bridges and borders (not railways, waterways or parks), and inserts the satellite layer at the bottom (`ui/radar/SatelliteLabels.kt` holds the keep-or-hide rule, unit-tested). Imagery is free for personal non-commercial use (CC BY-NC-SA 4.0), attribution "EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2024)" in the source (shown in the (i) dialog). Becomes a commercial licence if the app is ever monetised or sold.
+  - Not chosen: Esri World Imagery (key and unclear terms), OSM's own tile servers (not for app use), Mapbox/MapTiler (key and limits).
+- **Radar overlay** with the last 2 hours (13 frames, one every 10 minutes): play/pause, timeline slider with the frame time and "x min ago", opacity slider, legend (home server only), credits line plus MapLibre's (i), place marker. RainViewer is the default and works for everyone.
+- **Settings:** "Radar" (history on mobile data, default off) and "Home server (optional)": switch (off), address field (empty), "Test connection", server radar colours (Classic, Blues). Nothing is sent to the server unless the switch is on and an address is set (unit-tested); a failed or irrelevant server falls back to RainViewer with a notice ("not reachable (is Tailscale on?)", "no radar for this place", "no frames yet", unusable address).
+- Done when: radar animates smoothly on the phone with RainViewer *(yes)*, and with the home server at home and away from home over Tailscale *(yes, from Turku to the server in Italy)*; a fresh install with default settings makes no request to the server *(unit-tested)*; the measured data use meets the budget *(see Data budget: radar frames 0.4 to 1.1 MB, the first-time basemap about 3 MB)*.
+
+### How it works (for later phases)
+
+- **Code** (`dev.r2d8.weather`): `data/radar/` (`RadarApis`: RainViewer and home-server Retrofit APIs and DTOs; `ServerAddress`: normalising the typed address and the cleartext rule; `RadarRepository`: picks the source, falls back, thins the server's 5-minute frames to every 10 minutes over 2 hours), `data/NetworkMonitor` (metered or not, from `ConnectivityManager`), `domain/Radar.kt`, `domain/PlaceResolution.kt` (shared by the weather and radar screens), `ui/radar/` (`RadarViewModel`, `RadarScreen`, `RadarMap`), Settings additions.
+- **Map internals:** one raster source and one raster layer **per frame**; only the current frame has opacity above 0, the others stay at 0 so their tiles are fetched and cached, which makes playing smooth. Radar layers sit below the first label layer of the vector style. `RadarMap` forwards the Android lifecycle to the classic `MapView`, rebuilds layers after every style change, and keeps MapLibre's logo and (i) button above the controls card. The ViewModel's playback loop keeps its own frame index (reading it back from derived state repeated frames; found by a unit test).
+- **Source choice:** server only if the switch is on, the address is usable and `GET /coverage` says the place is covered, else RainViewer. RainViewer: `https://api.rainviewer.com/public/weather-maps.json`, 13 past frames, tiles `{host}{path}/256/{z}/{x}/{y}/2/1_1.png`, max zoom 7.
+- **Network security config** (`res/xml/network_security_config.xml`): cleartext HTTP blocked everywhere except `100.95.20.125`, the home server's Tailscale address (a unit test guards this). `ACCESS_NETWORK_STATE` is the only new permission.
+- **Findings:**
+  - RainViewer's free tiles **ignore the colour-scheme option**: all schemes returned identical pictures and sizes. Its picture includes very faint echoes as a tan haze, so it looks muddier and shows about 2.5 times the rain area DPC does.
+  - RainViewer tiles are heavy (20 to 35 KB, 8-bit RGBA) compared with the server's palette PNGs (3 to 6 KB); zoom 8 and above returns a 1.3 KB placeholder.
+  - **Alignment check:** the server's tiles and RainViewer's, for the same moment, show the same storm cells in the same places (overlay checked), so the DPC grid geometry is right.
+  - The phone to server round trip over Tailscale was about 390 ms in one test, which suggests a relayed rather than direct path; worth a look in Phase 7.
+- **Bugs found and fixed during testing:** a corrupted-file edit slip in my tooling (not in the app); the playback loop repeating frames; the home-server address field showing empty although saved (copied before the settings had loaded); the map's credits button hidden behind the controls.
+- **Known gaps:** no legend for RainViewer (its API gives none); the mobile-data behaviour (newest frame only, Play loads history, "Load once") is covered by unit tests but could not be tried on a real mobile connection because mobile data is off on the dev phone; RainViewer shows only past frames (no nowcast on the free tier); the APK is large (51 MB release) because MapLibre ships native libraries for four CPU types, which `abiFilters` or an APK split could cut; map labels are in each place's local language (OpenFreeMap), and the satellite view's roads and labels come from the Detailed style only, whatever style is chosen for the normal map.
+
+## Phase 5b – Radar forecast and offline maps (app side done; model frames next)
+
+**Decisions (2026-10-24):** a home-server forecast up to **+30 minutes** (Italy only); offline maps = **pinned map version + bigger cache + packs around each saved place** (no satellite packs); updates **when the app is opened on Wi-Fi** (no background work).
+
+**Done:** backend nowcast deployed (`nowcast.py`, `GET /forecast/{base}/{lead}/...`, `forecast` list in `/frames`); computed on first request after each new frame in about 1.2 s on the server, tiles about 3 KB, container memory about 134 MB (OpenCV added). Re-run of the backtest with the deployed code (16 start times): CSI >= 1 mm/h 0.51 -> 0.68 at +10, 0.37 -> 0.54 at +20, 0.31 -> 0.44 at +30 min. **Known limitation:** the optical flow under-measures motion in the faint parts of a shower (about 70 % of the true speed there, 90 % in the cores), which looked like a lag; the second backtest below found that on real rain, speeding the motion up makes scores worse, so it is not a practical problem.
+
+**Done in the app (2026-10-24):**
+- **Forecast frames:** shown after "now" on the radar slider, with the time in a different colour, "forecast +N min" and a note that new showers cannot be predicted. Only used if the forecast belongs to the newest frame. Checked on the phone with the server on (Lancenigo-Villorba, rain over Friuli, +30 min frame). The user's phone now has the home server switched on (`100.95.20.125:8080`).
+- **Offline maps** (`data/map`), checked on the phone:
+  - **Pinned map version.** `MapDataRepository` reads OpenFreeMap's TileJSON (`https://tiles.openfreemap.org/planet`) and writes each style to `files/map/` with the `openmaptiles` source changed from `url` to the fixed versioned `tiles` address (`StylePinning`). The map loads styles from `https://pinned-style.invalid/<style>.json`, a made-up address that an OkHttp interceptor in MapLibre's HTTP client answers from disk (`.invalid` never resolves, so nothing leaks). A local `file://` address would also show the map, but it is unclear whether MapLibre's offline downloader can read one; the fixed address works for both and stays the same when the version changes.
+  - **Updates.** A newer version is taken only on Wi-Fi and only after 30 days. Once a day, on any connection, one HEAD request checks that the pinned version still exists; if it is gone (404/410) the app moves to the newest at once, since otherwise the map would be blank.
+  - **Bigger cache.** MapLibre's ambient cache goes from 50 to 250 MB.
+  - **Packs per saved place** (`OfflinePacks`, `PackPlanner`). A box of about 60 x 60 km (30 km radius), zoom 0 to 12, made with the Detailed style. All four styles use the same tiles, so the others work too; only fonts a style never showed online may be missing. Within OpenFreeMap's terms: at most 3,000 tiles, at most 50 MB (above that, the most detailed zoom is dropped and the pack is retried), at most 4 parallel requests while downloading, and a User-Agent naming the app. Each pack stores its place, coordinates and version, so it is replaced when the place moves or the version changes (the old pack is deleted only after the new one is complete) and deleted when the place is removed. No Chinese/Japanese/Korean glyphs.
+  - **When.** `OfflineMapsUpdater` runs only while the app is on screen (`repeatOnLifecycle(STARTED)` in `MainActivity`). It starts 3 s after opening, restarts when the saved places or the connection change, and downloads only on an unmetered connection. Leaving the app pauses a download and opening it again resumes it. There is no background work.
+  - **Settings, "Offline maps".** A status line per saved place (waiting for Wi-Fi, downloading %, ready with size, problem) and the map data version in use.
+  - **Measured (2026-10-24, Wi-Fi):** Lancenigo-Villorba pack 17.6 MB, Turku 19.0 MB, both done in under 20 s. Normal and satellite views render from the pinned style.
+  - **Not done:** satellite packs (EOX terms unclear). Radar frames still need a connection, so without one the radar screen shows its "could not load" message rather than a bare map.
+
+**Second backtest: can Open-Meteo data improve the nowcast? (2026-10-24, answer: no)**
+- **Data.** DPC serves past frames at least 14 days back (checked 6 h to 336 h), so no change to the server was needed: 5-minute frames for 8 six-hour rain windows between 10 and 24 October were downloaded to the PC (about 580 frames; events on 10, 12, 18, 20-21, 23 and 24 Oct, including the large 20-21 Oct one). Open-Meteo's Historical Forecast API (archived model forecasts stitched from the first hours of each run, so slightly better than what is available live) gave hourly 700/850 hPa winds and 15-minute precipitation on a 0.25° grid (1,650 points inside the radar area), interpolated to the 1 km radar grid.
+- **Method.** A start every 20 minutes with rain on at least 0.3 % of the area (121 starts), scored at +10/+20/+30 min against the observed frame: CSI at 1 and 5 mm/h, and fractions skill score (FSS, 1 mm/h, 11 km window, more forgiving of small position errors). Differences are paired per start.
+- **Model winds point the right way but are too fast.** Direction agreement with the radar motion over rain was 0.95-0.99 (700 hPa), but the 700 hPa wind is about 1.6 times the speed at which the rain actually moved.
+- **Results at +30 min** (CSI >= 1 mm/h / CSI >= 5 / FSS):
+
+  | Variant | +30 min |
+  |---|---|
+  | Rain stays where it is | 0.413 / 0.228 / 0.714 |
+  | Current nowcast (one 10-min motion step) | 0.504 / 0.286 / 0.805 |
+  | Model wind where the radar motion is uncertain | 0.503 / 0.285 / 0.804 (no change) |
+  | 50 % radar motion + 50 % model wind | 0.501 / 0.278 / 0.806 |
+  | Model wind only (700 hPa) | 0.477 / 0.252 / 0.787 |
+  | Radar direction, model speed | 0.502 / 0.279 / 0.804 |
+  | Radar motion x 1.2 | 0.496 / 0.273 / 0.798 |
+  | Model rain trend as growth/decay | 0.503 / 0.282 / 0.804 |
+  | Blend 15 % model rain | 0.507 / 0.280 / 0.805 |
+  | Blend 30 % model rain | 0.484 / 0.267 / 0.777 |
+  | Model rain only | 0.230 / 0.068 / 0.423 |
+  | **Average of the last two motion steps** (radar only) | **0.511 / 0.292 / 0.813** |
+
+- **Conclusions.** Nothing from Open-Meteo helps at 10-30 minutes: the radar's own motion is closer to how rain moves than the model winds, and model rain is placed too imprecisely at 1 km. The speed-up variants also lost, so the "under-measured speed" seen on synthetic showers is not a problem on real rain. The one gain is radar-only: averaging the motion of the last two 10-minute steps, +0.005 to +0.008 on every score and lead, better in about 70 % of starts and on 6 of 7 days. Averaging three steps or weighting 0.5/0.3/0.2 was no better.
+- **Done:** the backend now averages two motion steps when the frame 20 minutes earlier is there (`compute(..., oldest=...)`), deployed 2026-10-24 (backend commit ef48425). Model data may still be useful for model forecast frames beyond the nowcast (next item), where radar extrapolation has no skill left.
+
+**Next (agreed):** research model forecast frames (below).
+
+**Idea raised by the user, not decided:** use weather-model forecasts beyond the 30-minute nowcast (see "Model forecast frames" below).
+
+
+**Radar forecast (nowcast).**
+- RainViewer removed forecast frames from its free API on 1 January 2026 (with it: one colour scheme only, max zoom 7, 100 requests per IP per minute; https://rainviewer.com/api/transition-faq.html). DPC publishes observations only.
+- Option: the home server computes its own short forecast by moving the newest DPC frame along the motion measured between recent frames (optical flow, semi-Lagrangian advection). **Backtest on real DPC data** (10 start times over about 3 hours on 23 Oct 2026, OpenCV Farneback flow over 10 minutes, motion capped at 35 km per 10 min), critical success index (overlap of forecast and observed rain, 0 to 1) against "the rain stays where it is":
+
+  | Lead | CSI >= 1 mm/h | CSI >= 5 mm/h | correlation |
+  |---|---|---|---|
+  | 15 min | 0.46 -> **0.62** | 0.33 -> **0.43** | 0.73 -> 0.88 |
+  | 30 min | 0.33 -> **0.46** | 0.25 -> **0.29** | 0.59 -> 0.75 |
+  | 60 min | 0.23 -> 0.28 | 0.20 -> 0.17 | 0.45 -> 0.54 |
+  | 90 min | 0.18 -> 0.21 | 0.18 -> 0.13 | 0.40 -> 0.42 |
+
+  Useful to about 30 minutes, marginal at 60, not worth it beyond; one evening only, so indicative. It cannot predict new storms forming. Italy only (DPC area). Libraries such as pysteps may do somewhat better. Other sources not evaluated: Rainbow.ai has a nowcast API with a free tier (needs an account and key).
+
+**Model forecast frames (idea, to verify).** Radar extrapolation only moves existing rain; a weather model also forms and dissolves storms, so it is the better source beyond about 30 to 60 minutes (it places rain less precisely in the first hour, which is why the two are usually blended: nowcast first, model after). Candidates, free and without a key, to be checked before deciding: DWD open data (opendata.dwd.de) with ICON-EU (about 7 km, all of Europe including Finland, hourly) and ICON-D2 (about 2 km, Germany and the Alps including northern Italy). The server would download the precipitation fields, render them with the same palettes as tiles and the app would show them after the nowcast frames, labelled as model forecast. Open-Meteo is point-based, so sampling a map grid from it would use many of its 10,000 daily calls; raw model files fit better. (The earlier "discarded" note about model data was about using it *instead of* radar, not as forecast frames.)
+
+**Offline maps.**
+- Radar cannot be offline (new frame every 5 minutes); past frames are already cached on the phone.
+- Cache rules measured from the servers' headers: OpenFreeMap vector tiles may be kept 10 years (`max-age=315360000`), its style 1 day; EOX satellite tiles 7 days (revalidated with `Last-Modified`); RainViewer tiles 2 days.
+- **Catch:** OpenFreeMap publishes a new map version weekly (tile URLs contain the version, e.g. `planet/20261018_080001_pt/`), and the style points to the newest. So any area viewed is downloaded again roughly every week (first open of a regional view with the Detailed style is about 5 MB of map data).
+- Measured tile sizes (median of six places): vector 80 to 210 KB per tile (z6 211, z10 118, z12 93, z13 80, z14 165 KB); satellite JPEG 19 to 28 KB.
+- OpenFreeMap allows pre-downloading areas for offline use, but each download at most 3,000 tiles or 50 MB, at most 4 parallel requests, with a User-Agent that identifies the app; larger needs: contact them, or self-host (they offer weekly planet downloads). A pack around one saved place (about 60 x 60 km) would be about 10 MB to zoom 12 or about 33 MB to zoom 13; all of Italy exceeds the limits. EOX gives no terms for bulk or offline caching on its site (it points to cloudless@eox.at), so satellite should not be pre-downloaded without asking them.
+- Design as proposed before building (built as described under "Done in the app"; the style is not bundled but downloaded and pinned on first use): (1) pin the OpenFreeMap map version in a style bundled with the app and move to a newer version only on Wi-Fi, for example monthly, falling back to the newest if the pinned one is gone; (2) raise MapLibre's map cache from the default 50 MB so viewed areas stay; (3) optionally, MapLibre offline packs around saved places, downloaded on Wi-Fi within OpenFreeMap's limits. Updates happen when the app is opened on Wi-Fi (no background work, rule 8), unless the user wants a background job.
 
 ## Phase 6 – Later / stretch
 
@@ -207,6 +288,8 @@ Goal: keep the convenience of reaching the home server from the phone, while mak
 | Battery | Anecdotes only, no official figures: from about 1% over ten days ([lemmy](https://lemmy.klein.ruhr/post/34612)) to ~5% a day, up to 30 to 40% overnight on GrapheneOS with the cause disputed ([lemmy](https://feddit.it/post/8664648)). Depends on traffic through the tunnel; split tunnelling (only tailnet addresses use it, which is the default without an exit node) is reported as unnoticeable. | Tailscale's VPN service ran 12 h 20 min; about 5 s of CPU; not in the per-app power list. Fits the low end. |
 | Reliability | Reports of the Android app dropping every 10 to 20 minutes unless it is the system's always-on VPN or exempt from battery optimisation ([forum](https://forum.tailscale.com/t/android-constantly-stopping/4689)). | Not observed (connected the whole charge cycle). |
 | Lost phone | Official guidance: nodes re-authenticate every 180 days by default, keep key expiry on, remove the device in the admin console, use least-privilege access rules, auto-update clients ([Tailscale security best practices](https://tailscale.com/kb/1196/security)). Access rules are deny-by-default once defined ([grants syntax](https://tailscale.com/kb/1538/grants-syntax)). | Not checked: the user has not shown the tailnet policy or the phone's key-expiry setting. |
+
+**Also to check:** a ping from the phone to the server over Tailscale took about 390 ms; look at `tailscale status` on the PC and the phone to see whether the connection is direct or relayed (a relayed path is slower, not less safe).
 
 **Risks in this setup:** (1) as far as the plan knows the tailnet still has the default policy that lets every device reach every other, so the phone could reach the server's SSH port (port 22 is open on the Tailscale interface); (2) SSH password login is still enabled on the server and `r2d8` is a sudoer; (3) Android allows one VPN at a time; (4) the server's own key expiry is disabled (deliberately, for availability).
 

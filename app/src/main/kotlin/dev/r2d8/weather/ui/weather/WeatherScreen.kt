@@ -58,6 +58,7 @@ import java.time.ZoneId
 fun WeatherRoute(
     onOpenPlaces: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenRadar: () -> Unit,
     viewModel: WeatherViewModel = viewModel(factory = WeatherViewModel.Factory),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -79,6 +80,7 @@ fun WeatherRoute(
         },
         onOpenPlaces = onOpenPlaces,
         onOpenSettings = onOpenSettings,
+        onOpenRadar = onOpenRadar,
     )
 }
 
@@ -91,12 +93,16 @@ fun WeatherScreen(
     onRequestLocationPermission: () -> Unit,
     onOpenPlaces: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenRadar: () -> Unit,
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { PlaceTitle(state, onSelect, onOpenPlaces) },
                 actions = {
+                    IconButton(onClick = onOpenRadar) {
+                        Icon(painterResource(R.drawable.ic_radar), contentDescription = "Rain radar")
+                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(painterResource(R.drawable.ic_settings), contentDescription = "Settings")
                     }
@@ -194,7 +200,7 @@ private fun WeatherContent(report: WeatherReport, error: RefreshError?, settings
         item { CurrentCard(report, now) }
         if (ForecastSection.RainNextHour in settings.visibleSections) item { RainCard(report, now) }
         if (ForecastSection.HourlyStrip in settings.visibleSections) item { HourlyCard(report, now) }
-        if (ForecastSection.DailyForecast in settings.visibleSections) item { DailyCard(report, now) }
+        if (ForecastSection.DailyForecast in settings.visibleSections) item { DailyCard(report, now, settings.visibleDayDetails) }
         if (settings.visibleCards.isNotEmpty()) item { DetailCards(report, now, settings.visibleCards) }
         item { Spacer(Modifier.height(16.dp)) }
     }

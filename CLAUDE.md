@@ -23,7 +23,7 @@ The plan lives in [docs/plan.md](docs/plan.md); home server notes in [docs/serve
 - Keep temporary files out of the project tree.
 
 ## Project structure
-Single module `:app`, package `dev.r2d8.weather`, Kotlin sources in `app/src/main/kotlin`, versions in `gradle/libs.versions.toml`. Manual DI (no Hilt): `AppContainer` is created in `WeatherApplication` and ViewModels get dependencies from it. Packages: `data` (remote, local/Room, repositories for weather, places and settings, location), `domain` (models and pure logic), `ui` (Compose screens: weather, places, settings, about, theme). Room schemas are exported to `app/schemas` (commit them). Stack, phases and the Phase 2 design notes: see [docs/plan.md](docs/plan.md).
+Single module `:app`, package `dev.r2d8.weather`, Kotlin sources in `app/src/main/kotlin`, versions in `gradle/libs.versions.toml`. Manual DI (no Hilt): `AppContainer` is created in `WeatherApplication` and ViewModels get dependencies from it. Packages: `data` (remote, local/Room, repositories for weather, places and settings, location), `domain` (models and pure logic), `ui` (Compose screens: weather, radar, places, settings, about, theme). Radar sources live in `data/radar`; offline maps (pinned OpenFreeMap version, packs per saved place, updated only while the app is open on Wi-Fi) in `data/map`; the home server is optional and off by default (rule 9), with plain HTTP allowed only for its Tailscale address in `res/xml/network_security_config.xml`. Room schemas are exported to `app/schemas` (commit them). Stack, phases and the Phase 2 design notes: see [docs/plan.md](docs/plan.md).
 
 ## Commands
 Run from the project root (needs `ANDROID_HOME`, see above):

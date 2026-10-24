@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Plain HTTP is blocked everywhere except for the home radar server's fixed Tailscale address.
+  The link to it is already encrypted by Tailscale (WireGuard). This is the only server-related
+  value compiled into the app; the server is switched off and has no address by default.
+  If the server's Tailscale IP ever changes, change it here and in the plan (docs/plan.md).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">100.95.20.125</domain>
+    </domain-config>
+</network-security-config>
