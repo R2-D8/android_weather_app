@@ -6,20 +6,20 @@ import org.junit.Test
 class WeatherConditionDisplayTest {
     @Test
     fun `overcast with a high rain chance is shown as rain`() {
-        assertEquals(ConditionKind.Drizzle, WeatherCondition.Overcast.displayKind(67))
-        assertEquals("Chance of rain", WeatherCondition.Overcast.displayLabel(67))
+        assertEquals(ConditionKind.PossibleRain, WeatherCondition.Overcast.displayKind(67))
+        assertEquals("Chance of light rain", WeatherCondition.Overcast.displayLabel(67))
     }
 
     @Test
     fun `the threshold is inclusive`() {
-        assertEquals(ConditionKind.Drizzle, WeatherCondition.Overcast.displayKind(RAIN_LIKELY_PERCENT))
+        assertEquals(ConditionKind.PossibleRain, WeatherCondition.Overcast.displayKind(RAIN_LIKELY_PERCENT))
         assertEquals(ConditionKind.Cloudy, WeatherCondition.Overcast.displayKind(RAIN_LIKELY_PERCENT - 1))
     }
 
     @Test
     fun `partly cloudy and fog are also upgraded`() {
-        assertEquals(ConditionKind.Drizzle, WeatherCondition.PartlyCloudy.displayKind(80))
-        assertEquals(ConditionKind.Drizzle, WeatherCondition.Fog.displayKind(80))
+        assertEquals(ConditionKind.PossibleRain, WeatherCondition.PartlyCloudy.displayKind(80))
+        assertEquals(ConditionKind.PossibleRain, WeatherCondition.Fog.displayKind(80))
     }
 
     @Test

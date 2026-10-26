@@ -52,6 +52,7 @@ fun iconFor(kind: ConditionKind, isDay: Boolean): Int = when (kind) {
     ConditionKind.PartlyCloudy -> if (isDay) R.drawable.ic_partly_cloudy_day else R.drawable.ic_partly_cloudy_night
     ConditionKind.Cloudy -> R.drawable.ic_cloud
     ConditionKind.Fog -> R.drawable.ic_foggy
+    ConditionKind.PossibleRain -> R.drawable.ic_rain_possible
     ConditionKind.Drizzle -> R.drawable.ic_rainy_light
     ConditionKind.Rain -> R.drawable.ic_rainy
     ConditionKind.HeavyRain -> R.drawable.ic_rainy_heavy

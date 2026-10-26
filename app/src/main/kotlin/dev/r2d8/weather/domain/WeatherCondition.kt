@@ -9,12 +9,14 @@ enum class ConditionKind(val severity: Int) {
     PartlyCloudy(1),
     Cloudy(2),
     Fog(3),
-    Drizzle(4),
-    Rain(5),
-    Snow(6),
-    FreezingRain(7),
-    HeavyRain(8),
-    Thunderstorm(9),
+    /** Display only (no weather code has it): dry main forecast, but a high rain chance. */
+    PossibleRain(4),
+    Drizzle(5),
+    Rain(6),
+    Snow(7),
+    FreezingRain(8),
+    HeavyRain(9),
+    Thunderstorm(10),
 }
 
 /** A WMO weather interpretation code (as used by Open-Meteo) with its English text. */
@@ -66,13 +68,16 @@ fun WeatherCondition.rainLikelyDespiteCode(rainChance: Int?): Boolean =
     kind in dryButCloudyKinds && rainChance != null && rainChance >= RAIN_LIKELY_PERCENT
 
 /**
- * The kind to draw. The weather code describes the forecast's most likely sky, but the rain
- * probability can be high while that code still says "overcast"; in that case showing a plain
- * cloud next to "67%" looks wrong, so a light-rain icon is used. Clear skies are left alone.
+ * The kind to draw. The weather code and the amount come from one detailed model, while the rain
+ * probability is the share of about 30 coarser ensemble runs with at least 0.1 mm. So the
+ * probability can be high while the code still says "overcast" and 0 mm: usually "very likely a
+ * few drops, timing uncertain". A plain cloud next to "92%" looks wrong and a rain icon promises
+ * rain the forecast does not have, so a cloud with one drop ("possible rain") is used. Clear
+ * skies are left alone.
  */
 fun WeatherCondition.displayKind(rainChance: Int?): ConditionKind =
-    if (rainLikelyDespiteCode(rainChance)) ConditionKind.Drizzle else kind
+    if (rainLikelyDespiteCode(rainChance)) ConditionKind.PossibleRain else kind
 
 /** The text matching [displayKind]. */
 fun WeatherCondition.displayLabel(rainChance: Int?): String =
-    if (rainLikelyDespiteCode(rainChance)) "Chance of rain" else label
+    if (rainLikelyDespiteCode(rainChance)) "Chance of light rain" else label

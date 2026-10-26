@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import dev.r2d8.weather.R
 import dev.r2d8.weather.domain.DayDetail
 import dev.r2d8.weather.domain.DayForecast
+import dev.r2d8.weather.domain.DayOverview
 import dev.r2d8.weather.domain.DayPartSummary
 import dev.r2d8.weather.domain.DayParts
 import dev.r2d8.weather.domain.HourForecast
@@ -54,6 +55,11 @@ private val dayFormat = DateTimeFormatter.ofPattern("EEE d", Locale.ENGLISH)
 fun DailyCard(report: WeatherReport, now: Instant, details: Set<DayDetail>) {
     val today = now.atZone(report.zone).toLocalDate()
     val days = remember(report, now) { report.days.filter { it.date >= today } }
+    // Icons come from the hours, not the daily code (see DayOverview); today only from hours still to come.
+    val icons = remember(report, now) {
+        val from = now.truncatedTo(ChronoUnit.HOURS)
+        days.associate { it.date to DayOverview.icon(it, report.hours, report.zone, from) }
+    }
     // Saved across rotation; LocalDate is stored as its epoch day.
     var openDay by rememberSaveable { mutableStateOf(NONE_OPEN) }
 
@@ -64,7 +70,7 @@ fun DailyCard(report: WeatherReport, now: Instant, details: Set<DayDetail>) {
                 val expandable = details.isNotEmpty()
                 val expanded = expandable && openDay == day.date.toEpochDay()
                 DayRow(
-                    day, today, expanded,
+                    day, icons.getValue(day.date), today, expanded,
                     onClick = if (expandable) ({ openDay = if (expanded) NONE_OPEN else day.date.toEpochDay() }) else null,
                 )
                 AnimatedVisibility(visible = expanded) {
@@ -76,7 +82,7 @@ fun DailyCard(report: WeatherReport, now: Instant, details: Set<DayDetail>) {
 }
 
 @Composable
-private fun DayRow(day: DayForecast, today: LocalDate, expanded: Boolean, onClick: (() -> Unit)?) {
+private fun DayRow(day: DayForecast, icon: DayOverview.Icon, today: LocalDate, expanded: Boolean, onClick: (() -> Unit)?) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth()
@@ -97,15 +103,15 @@ private fun DayRow(day: DayForecast, today: LocalDate, expanded: Boolean, onClic
         }
         Text(
             // Low chances are left blank in the day list to keep it calm; the hourly table shows every value.
-            text = day.precipitationProbabilityMax?.takeIf { it >= 10 }?.let { "$it%" }.orEmpty(),
+            text = icon.shownRainChance?.takeIf { it >= 10 }?.let { "$it%" }.orEmpty(),
             modifier = Modifier.width(44.dp),
             textAlign = TextAlign.End,
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.tertiary,
         )
         Icon(
-            painter = painterResource(iconFor(day.condition, isDay = true, rainChance = day.precipitationProbabilityMax)),
-            contentDescription = day.condition.displayLabel(day.precipitationProbabilityMax),
+            painter = painterResource(iconFor(icon.condition, isDay = true, rainChance = icon.rainChance)),
+            contentDescription = icon.condition.displayLabel(icon.rainChance),
             modifier = Modifier.padding(horizontal = 12.dp).size(28.dp),
             tint = MaterialTheme.colorScheme.primary,
         )

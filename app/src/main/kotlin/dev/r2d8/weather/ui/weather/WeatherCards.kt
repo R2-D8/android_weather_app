@@ -11,6 +11,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -68,10 +73,18 @@ fun CurrentCard(report: WeatherReport, now: Instant) {
         )
         Text(current.temperature.asTemperature(), fontSize = 76.sp, style = MaterialTheme.typography.displayLarge)
         Text(current.condition.label, style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(4.dp))
-        val feelsLike = "Feels like ${current.apparentTemperature.asTemperature()}"
-        val highLow = today?.let { " · H ${it.temperatureMax.asTemperature()}  L ${it.temperatureMin.asTemperature()}" }.orEmpty()
-        Text(feelsLike + highLow, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(12.dp))
+        val low = today?.temperatureMin
+        val high = today?.temperatureMax
+        if (low != null && high != null) {
+            TemperatureRange(low, high, current.temperature)
+            Spacer(Modifier.height(6.dp))
+        }
+        Text(
+            "Feels like ${current.apparentTemperature.asTemperature()}",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         // When the place is in another time zone its "today" can differ from the phone's date, so say what time it is there.
         if (ZoneId.systemDefault().rules.getOffset(now) != report.zone.rules.getOffset(now)) {
             Text(
@@ -162,5 +175,35 @@ private fun HourItem(hour: HourForecast, report: WeatherReport, isNow: Boolean) 
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.tertiary,
         )
+    }
+}
+
+/**
+ * Today's lowest and highest temperature with a bar between them; the dot marks the current
+ * temperature (kept on the bar if it is slightly outside the forecast range).
+ */
+@Composable
+private fun TemperatureRange(low: Double, high: Double, current: Double?) {
+    val track = MaterialTheme.colorScheme.outlineVariant
+    val dot = MaterialTheme.colorScheme.primary
+    val fraction = if (current == null || high <= low) null else ((current - low) / (high - low)).toFloat().coerceIn(0f, 1f)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.semantics(mergeDescendants = true) {
+            contentDescription = "Today from ${low.asTemperature()} to ${high.asTemperature()}"
+        },
+    ) {
+        Text(low.asTemperature(), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Canvas(Modifier.padding(horizontal = 12.dp).width(160.dp).height(12.dp)) {
+            val y = size.height / 2
+            val stroke = 4.dp.toPx()
+            drawLine(track, Offset(stroke / 2, y), Offset(size.width - stroke / 2, y), strokeWidth = stroke, cap = StrokeCap.Round)
+            if (fraction != null) {
+                val radius = size.height / 2
+                val x = radius + (size.width - 2 * radius) * fraction
+                drawCircle(dot, radius = radius, center = Offset(x, y))
+            }
+        }
+        Text(high.asTemperature(), style = MaterialTheme.typography.titleMedium)
     }
 }
