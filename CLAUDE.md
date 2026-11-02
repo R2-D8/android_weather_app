@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Project
-Ad-free Android weather app, personal use only (sideloaded). Kotlin + Jetpack Compose, min API 33. Weather data from Open-Meteo; radar map (MapLibre) fed by a radar backend on the user's home server (DPC data, reached over Tailscale) with RainViewer as an option; the home server also serves hourly temperature maps (DWD ICON-EU, height-corrected). Region focus: Italy/Europe. Test on a Galaxy A32 (Android 13) via USB.
+Ad-free Android weather app, personal use only (sideloaded). Kotlin + Jetpack Compose, min API 33. Weather data from Open-Meteo; radar map (MapLibre) fed by a radar backend on the user's home server (DPC data, reached over Tailscale) with RainViewer as an option; the home server also serves hourly temperature maps and 12 h of model rain after the radar (DWD ICON-D2/ICON-EU), and colours snow on its radar. Region focus: Italy/Europe. Test on a Galaxy A32 (Android 13) via USB.
 
 The plan lives in [docs/plan.md](docs/plan.md); home server notes in [docs/server.md](docs/server.md). Read them before starting any work.
 

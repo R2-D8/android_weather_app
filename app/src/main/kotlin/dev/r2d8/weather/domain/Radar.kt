@@ -27,10 +27,20 @@ enum class RadarPalette(val id: String, val label: String) {
 
 /**
  * One radar picture in time. [tileUrl] is a MapLibre template with {z}, {x} and {y}.
- * [forecastMinutes] is null for an observed picture, else how far past the newest observation it is.
+ * [forecastMinutes] is null for an observed picture, else how far past the newest observation it is
+ * (the radar nowcast). [isModel] marks weather-model rain from the home server: the rain in the hour
+ * ending at [time]. [maxZoom] and [attribution] override the layer set's for this frame (model
+ * frames after RainViewer's).
  */
-data class RadarFrame(val time: Instant, val tileUrl: String, val forecastMinutes: Int? = null) {
-    val isForecast: Boolean get() = forecastMinutes != null
+data class RadarFrame(
+    val time: Instant,
+    val tileUrl: String,
+    val forecastMinutes: Int? = null,
+    val isModel: Boolean = false,
+    val maxZoom: Int? = null,
+    val attribution: String? = null,
+) {
+    val isForecast: Boolean get() = forecastMinutes != null || isModel
 }
 
 /** From [from] mm/h upwards a tile is drawn in [colorArgb] (ARGB int, alpha included). */
@@ -44,12 +54,18 @@ data class RadarLayerSet(
     val maxZoom: Int,
     val tileSize: Int,
     val attribution: String,
-    /** The provider's legend, or null when it gives none (RainViewer). */
+    /**
+     * The home server's rain legend, or null without one. With RainViewer it describes only the
+     * model frames (RainViewer gives no legend).
+     */
     val legend: List<LegendBand>?,
     /** Something worth telling the user, e.g. that the home server was not used. */
     val notice: String?,
     /** Rough mobile data cost, in MB, of loading all frames for a regional view (for the user). */
     val historyEstimateMb: Int,
+    /** Colours of snow and of mixed rain and snow, when the server draws them (else empty). */
+    val snowLegend: List<LegendBand> = emptyList(),
+    val mixedLegend: List<LegendBand> = emptyList(),
 ) {
     /** The newest observed picture ("now"). */
     val newest: RadarFrame get() = frames.last { !it.isForecast }

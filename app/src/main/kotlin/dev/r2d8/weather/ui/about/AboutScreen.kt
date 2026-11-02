@@ -54,14 +54,15 @@ fun AboutScreen(onBack: () -> Unit) {
                 url = "https://atmosphere.copernicus.eu/",
             )
             Source(
-                title = "Temperature map (home server only)",
-                text = "Temperature from Deutscher Wetterdienst (DWD), ICON-EU model, licensed under CC BY 4.0, " +
-                    "corrected for ground height by the home server.",
+                title = "Temperature map, model rain and snow line (home server only)",
+                text = "Temperature, precipitation and snow line from Deutscher Wetterdienst (DWD), ICON-D2 and " +
+                    "ICON-EU models, licensed under CC BY 4.0. Temperature corrected for ground height, rain and " +
+                    "snow told apart by the home server.",
                 linkLabel = "opendata.dwd.de",
                 url = "https://opendata.dwd.de/",
             )
             Source(
-                title = "Ground height for the temperature map",
+                title = "Ground height for the temperature map and snow",
                 text = "Mapzen Terrain Tiles: SRTM and GMTED2010 courtesy of the U.S. Geological Survey; ETOPO1 by " +
                     "NOAA; Europe terrain data produced using Copernicus data and information funded by the European " +
                     "Union (EU-DEM layers); Austria © offene Daten Österreichs; Norway © Kartverket; and other sources.",

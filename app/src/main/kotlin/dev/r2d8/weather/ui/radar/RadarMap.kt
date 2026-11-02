@@ -237,8 +237,8 @@ private fun installRadar(style: Style, layers: RadarLayerSet?, frames: List<Rada
     val firstLabel = style.layers.firstOrNull { it is SymbolLayer }?.id
     frames.forEachIndexed { i, frame ->
         val tiles = TileSet("2.2.0", frame.tileUrl).apply {
-            maxZoom = layers.maxZoom.toFloat()
-            attribution = layers.attribution
+            maxZoom = (frame.maxZoom ?: layers.maxZoom).toFloat()
+            attribution = frame.attribution ?: layers.attribution
         }
         style.addSource(RasterSource("$RADAR_SOURCE$i", tiles, layers.tileSize))
         val layer = RasterLayer("$RADAR_LAYER$i", "$RADAR_SOURCE$i").withProperties(

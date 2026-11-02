@@ -53,11 +53,26 @@ class FakeServer(
         return ServerCoverage(covered)
     }
 
+    /** Whether the server offers snow colours (it has the model snow line). */
+    var snow = false
+    /** Model rain hours (end of each hour, epoch seconds); empty means the server has none. */
+    var modelHours: List<Long> = emptyList()
+    var modelFailure: Throwable? = null
+
     override suspend fun palettes(): ServerPalettes {
         calls++
         return ServerPalettes(
             listOf(ServerPalette("classic", listOf(ServerBand(0.1, "#aae1ff", 170), ServerBand(1.0, "#328cff", 220)))),
+            snowSuffix = if (snow) "-snow" else null,
+            mixed = if (snow) listOf(ServerBand(0.1, "#ffc8e6", 190)) else emptyList(),
+            snow = if (snow) listOf(ServerBand(0.1, "#f0f0ff", 190), ServerBand(0.3, "#d2cdff", 210)) else emptyList(),
         )
+    }
+
+    override suspend fun model(): ServerModel {
+        calls++
+        modelFailure?.let { throw it }
+        return ServerModel(hours = modelHours.shuffled().map { ServerModelHour(it, "100-200") })
     }
 
     override suspend fun health(): ServerHealth {
@@ -287,6 +302,78 @@ class RadarRepositoryTest {
         server.forecastBase = NEWEST - 300 // the frame list and the forecast do not match (race)
         val layers = repository.load(place, serverOn).getOrThrow()
         assertTrue(layers.frames.none { it.isForecast })
+    }
+
+    @Test
+    fun `model rain frames follow the radar nowcast`() = runTest {
+        server.forecastBase = NEWEST
+        // The first model hour ends before the nowcast does, so it is left out.
+        server.modelHours = (0..3).map { NEWEST + 1200 + it * 3600L }
+
+        val layers = repository.load(place, serverOn).getOrThrow()
+
+        assertEquals(13 + 3 + 3, layers.frames.size)
+        val model = layers.frames.takeLast(3)
+        assertTrue(model.all { it.isModel && it.isForecast })
+        assertEquals((1..3).map { NEWEST + 1200 + it * 3600L }, model.map { it.time.epochSecond })
+        assertEquals(
+            "http://100.95.20.125:8080/model/100-200/${NEWEST + 4800}/classic/{z}/{x}/{y}.png",
+            model.first().tileUrl,
+        )
+        assertEquals(RadarRepository.MODEL_ATTRIBUTION, model.first().attribution)
+        assertEquals(8, model.first().maxZoom)
+        assertEquals(12, layers.newestIndex) // "now" is still the newest observation
+        assertEquals(RadarRepository.SERVER_HISTORY_MB + RadarRepository.MODEL_FRAMES_MB, layers.historyEstimateMb)
+    }
+
+    @Test
+    fun `places without home-server radar get RainViewer then the model frames`() = runTest {
+        server.covered = false
+        server.modelHours = listOf(NEWEST + 3600L, NEWEST + 7200L)
+
+        val layers = repository.load(Place("Turku", 60.45, 22.27), serverOn).getOrThrow()
+
+        assertEquals(RadarSourceKind.RainViewer, layers.source)
+        assertEquals(13 + 2, layers.frames.size)
+        assertEquals(7, layers.maxZoom)
+        assertEquals(8, layers.frames.last().maxZoom)
+        assertTrue(layers.frames.last().tileUrl.startsWith("http://100.95.20.125:8080/model/"))
+        assertEquals("the server legend describes the model frames", 2, layers.legend!!.size)
+    }
+
+    @Test
+    fun `without model frames RainViewer keeps no legend, and a failing model list changes nothing`() = runTest {
+        server.covered = false
+        val turku = Place("Turku", 60.45, 22.27)
+        assertNull(repository.load(turku, serverOn).getOrThrow().legend)
+
+        server.covered = true
+        server.modelFailure = IOException("timeout")
+        val layers = repository.load(place, serverOn).getOrThrow()
+        assertEquals(RadarSourceKind.HomeServer, layers.source)
+        assertTrue(layers.frames.none { it.isModel })
+    }
+
+    @Test
+    fun `snow colours are asked for when the server offers them`() = runTest {
+        server.snow = true
+        server.forecastBase = NEWEST
+        server.modelHours = listOf(NEWEST + 3600L)
+
+        val layers = repository.load(place, serverOn).getOrThrow()
+
+        assertTrue(layers.frames.all { it.tileUrl.contains("/classic-snow/") })
+        assertEquals(2, layers.snowLegend.size)
+        assertEquals(0xBEF0F0FF.toInt(), layers.snowLegend.first().colorArgb)
+        assertEquals(1, layers.mixedLegend.size)
+    }
+
+    @Test
+    fun `temperature tiles use the version naming both model runs`() = runTest {
+        val now = server.temperatureNow
+        server.temperatureHours = listOf(ServerTemperatureHour(now, now - 7200, "${now - 7200}-${now - 3600}"))
+        val layers = repository.loadTemperature(serverOn).getOrThrow()
+        assertTrue(layers.hours[0].tileUrl.contains("/temperature/${now - 7200}-${now - 3600}/$now/"))
     }
 
     @Test

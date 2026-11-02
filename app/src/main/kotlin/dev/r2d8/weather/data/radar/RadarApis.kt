@@ -48,8 +48,18 @@ data class ServerCoverage(val covered: Boolean)
 @Serializable
 data class ServerHealth(val status: String, val frames: Int = 0)
 
+/**
+ * The server's rain palettes. When [snowSuffix] is set (the server knows the model snow line),
+ * appending it to a palette name gives tiles with snow and mixed precipitation in the [snow] and
+ * [mixed] colours.
+ */
 @Serializable
-data class ServerPalettes(val palettes: List<ServerPalette> = emptyList())
+data class ServerPalettes(
+    val palettes: List<ServerPalette> = emptyList(),
+    @SerialName("snow_suffix") val snowSuffix: String? = null,
+    val mixed: List<ServerBand> = emptyList(),
+    val snow: List<ServerBand> = emptyList(),
+)
 
 @Serializable
 data class ServerPalette(val name: String, val bands: List<ServerBand> = emptyList())
@@ -68,9 +78,24 @@ data class ServerTemperature(
     val bands: List<ServerTemperatureBand> = emptyList(),
 )
 
-/** [id] is the hour, [run] the model run it comes from (both epoch seconds; both are in tile URLs). */
+/**
+ * [id] is the hour, [run] the ICON-EU run it comes from (both epoch seconds). [version] names all
+ * model runs used (ICON-EU and ICON-D2) and goes into the tile URL; older servers only send [run].
+ */
 @Serializable
-data class ServerTemperatureHour(val id: Long, val run: Long)
+data class ServerTemperatureHour(val id: Long, val run: Long, val version: String? = null)
+
+/** Model rain frames (`GET /model`): each is the rain in the hour ending at its [ServerModelHour.id]. */
+@Serializable
+data class ServerModel(
+    val hours: List<ServerModelHour> = emptyList(),
+    @SerialName("max_zoom") val maxZoom: Int = 8,
+    @SerialName("tile_size") val tileSize: Int = 256,
+)
+
+/** [id] is the end of the hour (epoch seconds); [version] names the model runs, for the tile URL. */
+@Serializable
+data class ServerModelHour(val id: Long, val version: String)
 
 @Serializable
 data class ServerTemperatureBand(val from: Double, val color: String)
@@ -93,6 +118,9 @@ interface HomeServerApi {
 
     @GET("temperature")
     suspend fun temperature(): ServerTemperature
+
+    @GET("model")
+    suspend fun model(): ServerModel
 
     @GET("temperature/point")
     suspend fun temperaturePoint(

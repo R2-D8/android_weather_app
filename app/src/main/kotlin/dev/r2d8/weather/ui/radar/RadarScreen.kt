@@ -48,6 +48,7 @@ import dev.r2d8.weather.R
 import dev.r2d8.weather.domain.MapStyle
 import dev.r2d8.weather.domain.Basemap
 import dev.r2d8.weather.domain.LegendBand
+import dev.r2d8.weather.domain.RadarSourceKind
 import dev.r2d8.weather.domain.MapOverlay
 import dev.r2d8.weather.ui.weather.asClock
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -269,13 +270,20 @@ private fun Controls(
                 Text("Opacity", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(64.dp))
                 Slider(value = state.opacity, onValueChange = onOpacity, valueRange = 0.1f..1f, modifier = Modifier.weight(1f))
             }
+            val frame = state.frames.getOrNull(state.index)
+            // With RainViewer the server's legend only describes its model frames.
+            val serverDrawn = layers?.source == RadarSourceKind.HomeServer || frame?.isModel == true
             if (showTemperature) {
                 state.temperature.layers?.let { TemperatureLegend(it.legend) }
-            } else {
-                layers?.legend?.let { Legend(it) }
+            } else if (serverDrawn) {
+                layers?.legend?.let { Legend(it, layers.mixedLegend, layers.snowLegend) }
+            }
+            val credit = when {
+                showTemperature -> TEMPERATURE_CREDIT
+                else -> frame?.attribution ?: layers?.attribution.orEmpty()
             }
             Text(
-                text = "${if (showTemperature) TEMPERATURE_CREDIT else layers?.attribution.orEmpty()} · map credits: (i) on the map",
+                text = "$credit · map credits: (i) on the map",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -293,7 +301,9 @@ private fun Playback(state: RadarUiState, estimateMb: Int, onTogglePlay: () -> U
                 Icon(painterResource(R.drawable.ic_play_arrow), contentDescription = "Load the last 2 hours and play")
             }
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text("Play loads the last 2 hours (about $estimateMb MB).", style = MaterialTheme.typography.bodyMedium)
+                val modelHours = state.layers?.frames?.count { it.isModel } ?: 0
+                val ahead = if (modelHours > 0) " and the next $modelHours" else ""
+                Text("Play loads the last 2 hours$ahead (about $estimateMb MB).", style = MaterialTheme.typography.bodyMedium)
                 Text(
                     "Showing the newest picture.",
                     style = MaterialTheme.typography.labelMedium,
@@ -336,13 +346,24 @@ private fun Playback(state: RadarUiState, estimateMb: Int, onTogglePlay: () -> U
                 color = if (frame.isForecast) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                text = if (frame.isForecast) "forecast +${frame.forecastMinutes} min" else age(frame.time),
+                text = when {
+                    frame.isModel -> "model +${hoursAhead(frame.time)} h"
+                    frame.isForecast -> "forecast +${frame.forecastMinutes} min"
+                    else -> age(frame.time)
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = if (frame.isForecast) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
-    if (frame.isForecast) {
+    if (frame.isModel) {
+        Text(
+            "Weather model: rain in the hour before this time. Good for the overall picture, " +
+                "less exact than radar about where showers fall.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.tertiary,
+        )
+    } else if (frame.isForecast) {
         Text(
             "Forecast: the latest rain moved along its recent motion. New showers cannot be predicted.",
             style = MaterialTheme.typography.labelSmall,
@@ -371,13 +392,9 @@ private fun NewestOnly(state: RadarUiState, onLoadHistoryOnce: () -> Unit) {
 }
 
 @Composable
-private fun Legend(bands: List<LegendBand>) {
+private fun Legend(bands: List<LegendBand>, mixed: List<LegendBand>, snow: List<LegendBand>) {
     Column {
-        Row(Modifier.fillMaxWidth().height(10.dp)) {
-            bands.forEach { band ->
-                Box(Modifier.weight(1f).fillMaxSize().background(Color(band.colorArgb)))
-            }
-        }
+        LegendBar(bands)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             val first = bands.first().from
             val last = bands.last().from
@@ -385,8 +402,33 @@ private fun Legend(bands: List<LegendBand>) {
             Text("light to heavy rain", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("${last.trimmed()}+", style = MaterialTheme.typography.labelSmall)
         }
+        if (mixed.isNotEmpty() && snow.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f)) {
+                    LegendBar(mixed)
+                    Text("rain and snow", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Column(Modifier.weight(1.5f)) {
+                    LegendBar(snow)
+                    Text("snow, light to heavy", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
     }
 }
+
+@Composable
+private fun LegendBar(bands: List<LegendBand>) {
+    Row(Modifier.fillMaxWidth().height(10.dp)) {
+        bands.forEach { band ->
+            Box(Modifier.weight(1f).fillMaxSize().background(Color(band.colorArgb)))
+        }
+    }
+}
+
+/** Whole hours from now to [time], at least 1 (model frames lie ahead). */
+private fun hoursAhead(time: Instant, now: Instant = Instant.now()): Long =
+    ((Duration.between(now, time).toMinutes() + 30) / 60).coerceAtLeast(1)
 
 private fun Double.trimmed(): String = if (this == this.toInt().toDouble()) toInt().toString() else toString()
 
@@ -401,7 +443,7 @@ private fun age(time: Instant, now: Instant = Instant.now()): String {
 }
 
 /** Short credit under the temperature map; the full list (terrain sources too) is in About. */
-private const val TEMPERATURE_CREDIT = "Temperature: DWD ICON-EU (CC BY 4.0), height-corrected"
+private const val TEMPERATURE_CREDIT = "Temperature: DWD ICON-D2/ICON-EU (CC BY 4.0), height-corrected"
 
 private val dayHourFormat = DateTimeFormatter.ofPattern("EEE HH:mm", Locale.ENGLISH)
 
