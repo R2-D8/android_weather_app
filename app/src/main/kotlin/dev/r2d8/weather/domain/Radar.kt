@@ -55,3 +55,24 @@ data class RadarLayerSet(
     val newest: RadarFrame get() = frames.last { !it.isForecast }
     val newestIndex: Int get() = frames.indexOfLast { !it.isForecast }
 }
+
+/** What the map draws over the basemap. Temperature needs the home server. */
+enum class MapOverlay(val label: String) { Rain("Rain"), Temperature("Temperature") }
+
+/** One hour of the temperature map; [tileUrl] is a MapLibre template with {z}, {x} and {y}. */
+data class TemperatureHour(val time: Instant, val id: Long, val tileUrl: String)
+
+/** The home server's hourly temperature maps (model data corrected for ground height). */
+data class TemperatureLayerSet(
+    /** Oldest first: about a day back and two days ahead. */
+    val hours: List<TemperatureHour>,
+    /** Index of the current hour (or the closest one). */
+    val nowIndex: Int,
+    val maxZoom: Int,
+    val tileSize: Int,
+    /** Lower bound in °C and colour of each band, ascending. */
+    val legend: List<LegendBand>,
+)
+
+/** The temperature at a point the user tapped, for one hour. [celsius] is null outside the model area. */
+data class PointTemperature(val celsius: Double?, val groundMetres: Int)

@@ -4,12 +4,18 @@ import dev.r2d8.weather.data.runCatchingCancellable
 import dev.r2d8.weather.domain.AppSettings
 import dev.r2d8.weather.domain.LegendBand
 import dev.r2d8.weather.domain.Place
+import dev.r2d8.weather.domain.PointTemperature
 import dev.r2d8.weather.domain.RadarFrame
 import dev.r2d8.weather.domain.RadarLayerSet
 import dev.r2d8.weather.domain.RadarPalette
 import dev.r2d8.weather.domain.RadarSourceKind
+import dev.r2d8.weather.domain.TemperatureHour
+import dev.r2d8.weather.domain.TemperatureLayerSet
 import java.time.Instant
 import kotlin.math.abs
+
+/** The temperature maps cannot be shown; [message] is written for the user. */
+class TemperatureUnavailable(message: String) : Exception(message)
 
 sealed interface ServerTestResult {
     data class Ok(val frames: Int) : ServerTestResult
@@ -64,6 +70,68 @@ class RadarRepository(
         false -> "Tailscale is off on this phone: turn it on to use your home server."
         true -> "The home server is not answering. Tailscale is on, so the server may be down or restarting."
         null -> "Home server not reachable (is Tailscale on?)."
+    }
+
+    /**
+     * The home server's temperature maps. Fails with a [TemperatureUnavailable] whose message can
+     * be shown as is. Never contacts anything unless the home server is switched on.
+     */
+    suspend fun loadTemperature(settings: AppSettings): Result<TemperatureLayerSet> {
+        val api = serverFor(settings) ?: return Result.failure(TemperatureUnavailable(NEEDS_SERVER))
+        val base = checkNotNull(ServerAddress.normalize(settings.homeServerAddress))
+        val answer = try {
+            api.temperature()
+        } catch (e: retrofit2.HttpException) {
+            val message = if (e.code() == 404) {
+                "This home server has no temperature maps: update it to the newest version."
+            } else {
+                "The home server could not send the temperature maps (HTTP ${e.code()})."
+            }
+            return Result.failure(TemperatureUnavailable(message))
+        } catch (e: java.io.IOException) {
+            return Result.failure(TemperatureUnavailable(unreachableReason()))
+        } catch (e: kotlinx.serialization.SerializationException) {
+            return Result.failure(TemperatureUnavailable("The home server's answer could not be read."))
+        }
+        if (answer.hours.isEmpty()) {
+            return Result.failure(
+                TemperatureUnavailable("The home server is still collecting temperature maps. Try again in a few minutes."),
+            )
+        }
+        val hours = answer.hours.sortedBy { it.id }.map {
+            TemperatureHour(
+                time = Instant.ofEpochSecond(it.id),
+                id = it.id,
+                tileUrl = "${base}temperature/${it.run}/${it.id}/${answer.palette}/{z}/{x}/{y}.png",
+            )
+        }
+        val legend = answer.bands.mapNotNull { band ->
+            val rgb = band.color.removePrefix("#").toIntOrNull(16) ?: return@mapNotNull null
+            LegendBand(band.from, (0xFF shl 24) or rgb)
+        }
+        return Result.success(
+            TemperatureLayerSet(
+                hours = hours,
+                nowIndex = hours.indices.minBy { abs(hours[it].id - answer.now) },
+                maxZoom = answer.maxZoom,
+                tileSize = answer.tileSize,
+                legend = legend,
+            ),
+        )
+    }
+
+    /** The temperature at a tapped point for one hour (a request of a few hundred bytes). */
+    suspend fun temperatureAt(settings: AppSettings, latitude: Double, longitude: Double, hourId: Long): Result<PointTemperature> {
+        val api = serverFor(settings) ?: return Result.failure(TemperatureUnavailable(NEEDS_SERVER))
+        return runCatchingCancellable {
+            val point = api.temperaturePoint(latitude, longitude, hourId)
+            PointTemperature(point.temperature, point.groundMetres)
+        }
+    }
+
+    private fun serverFor(settings: AppSettings): HomeServerApi? {
+        if (!settings.homeServerEnabled || ServerAddress.problem(settings.homeServerAddress) != null) return null
+        return serverApi(checkNotNull(ServerAddress.normalize(settings.homeServerAddress)))
     }
 
     private sealed interface ServerAttempt {
@@ -147,6 +215,8 @@ class RadarRepository(
         }
 
     companion object {
+        const val NEEDS_SERVER = "Temperature maps come from your home server: switch it on in Settings."
+
         /** RainViewer's free tiles stop at zoom 7 (higher zooms return a placeholder picture). */
         const val RAINVIEWER_MAX_ZOOM = 7
         const val RAINVIEWER_ATTRIBUTION = "Radar: RainViewer.com"

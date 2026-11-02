@@ -48,7 +48,16 @@ import dev.r2d8.weather.R
 import dev.r2d8.weather.domain.MapStyle
 import dev.r2d8.weather.domain.Basemap
 import dev.r2d8.weather.domain.LegendBand
+import dev.r2d8.weather.domain.MapOverlay
 import dev.r2d8.weather.ui.weather.asClock
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.runtime.mutableStateOf
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.Instant
@@ -82,6 +91,11 @@ fun RadarRoute(onBack: () -> Unit, viewModel: RadarViewModel = viewModel(factory
         onLoadHistoryOnce = viewModel::loadHistoryOnce,
         onMapIdle = viewModel::onMapIdle,
         styleUrlOf = viewModel::styleUrl,
+        onOverlay = viewModel::setOverlay,
+        onSelectHour = viewModel::selectHour,
+        onMapTap = viewModel::onMapTap,
+        onClearTapped = viewModel::clearTapped,
+        onRetryTemperature = viewModel::retryTemperature,
     )
 }
 
@@ -97,22 +111,39 @@ fun RadarScreen(
     onLoadHistoryOnce: () -> Unit,
     onMapIdle: () -> Unit,
     styleUrlOf: suspend (MapStyle) -> String = { it.url },
+    onOverlay: (MapOverlay) -> Unit = {},
+    onSelectHour: (Int) -> Unit = {},
+    onMapTap: (Double, Double) -> Unit = { _, _ -> },
+    onClearTapped: () -> Unit = {},
+    onRetryTemperature: () -> Unit = {},
 ) {
     val place = state.place
     val layers = state.layers
+    val showTemperature = state.overlay == MapOverlay.Temperature
+    val radarReady = layers != null && state.frames.isNotEmpty()
     var controlsHeight by remember { mutableIntStateOf(0) }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
-        if (place != null && layers != null && state.frames.isNotEmpty()) {
+        if (place != null && (radarReady || showTemperature)) {
+            val temperature = state.temperature
+            val hour = temperature.hour
             RadarMap(
                 place = place,
                 basemap = state.basemap,
                 mapStyle = state.mapStyle,
                 layers = layers,
-                frames = state.frames,
+                frames = if (showTemperature) emptyList() else state.frames,
                 index = state.index,
                 opacity = state.opacity,
                 bottomInsetPx = controlsHeight,
                 onIdle = onMapIdle,
+                temperature = if (showTemperature && hour != null) {
+                    val set = checkNotNull(temperature.layers)
+                    TemperatureOverlay(hour, set.maxZoom, set.tileSize, TEMPERATURE_CREDIT)
+                } else {
+                    null
+                },
+                marker = temperature.tapped?.takeIf { showTemperature }?.let { it.latitude to it.longitude },
+                onTap = onMapTap,
                 styleUrlOf = styleUrlOf,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -121,19 +152,23 @@ fun RadarScreen(
         }
 
         TopBar(
-            title = place?.name?.let { "Radar · $it" } ?: "Radar",
+            title = place?.name?.let { "${if (showTemperature) "Temperature" else "Radar"} · $it" } ?: "Radar",
             basemap = state.basemap,
             onBack = onBack,
             onToggleBasemap = onToggleBasemap,
             modifier = Modifier.align(Alignment.TopCenter),
         )
-        if (layers != null && state.frames.isNotEmpty()) {
+        if (place != null && (radarReady || showTemperature)) {
             Controls(
                 state = state,
                 onTogglePlay = onTogglePlay,
                 onSelect = onSelect,
                 onOpacity = onOpacity,
                 onLoadHistoryOnce = onLoadHistoryOnce,
+                onOverlay = onOverlay,
+                temperatureContent = {
+                    TemperatureControls(state.temperature, onSelectHour, onClearTapped, onRetryTemperature)
+                },
                 modifier = Modifier.align(Alignment.BottomCenter).onSizeChanged { controlsHeight = it.height },
             )
         }
@@ -202,9 +237,11 @@ private fun Controls(
     onSelect: (Int) -> Unit,
     onOpacity: (Float) -> Unit,
     onLoadHistoryOnce: () -> Unit,
+    onOverlay: (MapOverlay) -> Unit,
+    temperatureContent: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val layers = checkNotNull(state.layers)
+    val layers = state.layers
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
@@ -214,21 +251,31 @@ private fun Controls(
             Modifier.windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            layers.notice?.let {
-                Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
-            }
-            if (state.historyAllowed) {
-                Playback(state, layers.historyEstimateMb, onTogglePlay, onSelect)
-            } else {
-                NewestOnly(state, onLoadHistoryOnce)
+            if (state.serverOn) OverlayChoice(state.overlay, onOverlay)
+            val showTemperature = state.overlay == MapOverlay.Temperature
+            if (showTemperature) {
+                temperatureContent()
+            } else if (layers != null) {
+                layers.notice?.let {
+                    Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
+                }
+                if (state.historyAllowed) {
+                    Playback(state, layers.historyEstimateMb, onTogglePlay, onSelect)
+                } else {
+                    NewestOnly(state, onLoadHistoryOnce)
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Opacity", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(64.dp))
                 Slider(value = state.opacity, onValueChange = onOpacity, valueRange = 0.1f..1f, modifier = Modifier.weight(1f))
             }
-            layers.legend?.let { Legend(it) }
+            if (showTemperature) {
+                state.temperature.layers?.let { TemperatureLegend(it.legend) }
+            } else {
+                layers?.legend?.let { Legend(it) }
+            }
             Text(
-                text = "${layers.attribution} · map credits: (i) on the map",
+                text = "${if (showTemperature) TEMPERATURE_CREDIT else layers?.attribution.orEmpty()} · map credits: (i) on the map",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -350,5 +397,119 @@ private fun age(time: Instant, now: Instant = Instant.now()): String {
         minutes < 1 -> "just now"
         minutes < 60 -> "$minutes min ago"
         else -> "${minutes / 60} h ${minutes % 60} min ago"
+    }
+}
+
+/** Short credit under the temperature map; the full list (terrain sources too) is in About. */
+private const val TEMPERATURE_CREDIT = "Temperature: DWD ICON-EU (CC BY 4.0), height-corrected"
+
+private val dayHourFormat = DateTimeFormatter.ofPattern("EEE HH:mm", Locale.ENGLISH)
+
+@Composable
+private fun OverlayChoice(selected: MapOverlay, onOverlay: (MapOverlay) -> Unit) {
+    val options = MapOverlay.entries
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        options.forEachIndexed { i, option ->
+            SegmentedButton(
+                selected = option == selected,
+                onClick = { onOverlay(option) },
+                shape = SegmentedButtonDefaults.itemShape(i, options.size),
+            ) { Text(option.label) }
+        }
+    }
+}
+
+@Composable
+private fun TemperatureControls(
+    temperature: TemperatureUi,
+    onSelectHour: (Int) -> Unit,
+    onClearTapped: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    val layers = temperature.layers
+    when {
+        layers == null && temperature.loading -> Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+            Text("Loading temperature maps…", modifier = Modifier.padding(start = 12.dp))
+        }
+        layers == null -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                temperature.problem ?: "Temperature maps are not available.",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onRetry) { Text("Retry") }
+        }
+        else -> {
+            // While dragging only the label follows; the hour's tiles load when the finger lifts,
+            // so sliding across two days does not fetch every hour on the way.
+            var dragging by remember(layers) { mutableStateOf<Int?>(null) }
+            val shown = (dragging ?: temperature.index).coerceIn(0, layers.hours.size - 1)
+            val hour = layers.hours[shown]
+            val hoursFromNow = (hour.id - layers.hours[layers.nowIndex].id) / 3600
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Slider(
+                    value = shown.toFloat(),
+                    onValueChange = { dragging = it.roundToInt() },
+                    onValueChangeFinished = {
+                        dragging?.let(onSelectHour)
+                        dragging = null
+                    },
+                    valueRange = 0f..(layers.hours.size - 1).toFloat().coerceAtLeast(1f),
+                    enabled = layers.hours.size > 1,
+                    modifier = Modifier.weight(1f).padding(end = 8.dp),
+                )
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(dayHourFormat.format(hour.time.atZone(ZoneId.systemDefault())), style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        when {
+                            hoursFromNow == 0L -> "now"
+                            hoursFromNow > 0 -> "forecast +$hoursFromNow h"
+                            else -> "${-hoursFromNow} h ago"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (hoursFromNow > 0) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            val tapped = temperature.tapped
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(32.dp)) {
+                val text = when {
+                    tapped == null -> "Tap the map to see the temperature at a point."
+                    tapped.value != null && tapped.value.celsius != null ->
+                        "${tapped.value.celsius.roundToInt()} °C at the ring (ground ${tapped.value.groundMetres} m)" +
+                            if (tapped.loading) " …" else ""
+                    tapped.value != null -> "No model data at that point."
+                    tapped.loading -> "Asking the server…"
+                    else -> "Could not get the temperature there."
+                }
+                Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                if (tapped != null) TextButton(onClick = onClearTapped) { Text("Clear") }
+            }
+        }
+    }
+}
+
+/** The colour bands with a few round temperatures written under their place on the bar. */
+@Composable
+private fun TemperatureLegend(bands: List<LegendBand>) {
+    if (bands.size < 2) return
+    val low = bands.first().from
+    val step = bands[1].from - bands[0].from
+    val high = bands.last().from + step
+    Column {
+        Row(Modifier.fillMaxWidth().height(10.dp)) {
+            bands.forEach { band -> Box(Modifier.weight(1f).fillMaxSize().background(Color(band.colorArgb))) }
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth().height(16.dp)) {
+            listOf(-20, -10, 0, 10, 20, 30, 40).filter { it > low && it < high }.forEach { t ->
+                val fraction = ((t - low) / (high - low)).toFloat()
+                Text(
+                    if (t == 40) "$t °C" else "$t",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.offset(x = maxWidth * fraction - 8.dp),
+                )
+            }
+        }
     }
 }

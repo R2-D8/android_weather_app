@@ -57,6 +57,27 @@ data class ServerPalette(val name: String, val bands: List<ServerBand> = emptyLi
 @Serializable
 data class ServerBand(val from: Double, val color: String, val alpha: Int)
 
+/** Hourly temperature maps (`GET /temperature`); [now] is the current hour, epoch seconds. */
+@Serializable
+data class ServerTemperature(
+    val hours: List<ServerTemperatureHour> = emptyList(),
+    val now: Long = 0,
+    @SerialName("max_zoom") val maxZoom: Int = 8,
+    @SerialName("tile_size") val tileSize: Int = 256,
+    val palette: String = "temp2c",
+    val bands: List<ServerTemperatureBand> = emptyList(),
+)
+
+/** [id] is the hour, [run] the model run it comes from (both epoch seconds; both are in tile URLs). */
+@Serializable
+data class ServerTemperatureHour(val id: Long, val run: Long)
+
+@Serializable
+data class ServerTemperatureBand(val from: Double, val color: String)
+
+@Serializable
+data class ServerTemperaturePoint(val temperature: Double? = null, @SerialName("ground_m") val groundMetres: Int = 0)
+
 interface HomeServerApi {
     @GET("frames")
     suspend fun frames(): ServerFrames
@@ -69,4 +90,14 @@ interface HomeServerApi {
 
     @GET("health")
     suspend fun health(): ServerHealth
+
+    @GET("temperature")
+    suspend fun temperature(): ServerTemperature
+
+    @GET("temperature/point")
+    suspend fun temperaturePoint(
+        @Query("lat") latitude: Double,
+        @Query("lon") longitude: Double,
+        @Query("valid") hourId: Long,
+    ): ServerTemperaturePoint
 }

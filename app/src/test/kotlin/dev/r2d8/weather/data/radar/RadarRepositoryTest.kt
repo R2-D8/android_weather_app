@@ -65,6 +65,34 @@ class FakeServer(
         healthFailure?.let { throw it }
         return ServerHealth("ok", 73)
     }
+
+    /** Hours from 3 h ago to 3 h ahead of [temperatureNow]; those before the run (2 h ago) from an older run. */
+    var temperatureNow = 1_793_664_000L
+    var temperatureHours: List<ServerTemperatureHour>? = null
+    var temperatureFailure: Throwable? = null
+    val pointRequests = mutableListOf<Triple<Double, Double, Long>>()
+
+    override suspend fun temperature(): ServerTemperature {
+        calls++
+        temperatureFailure?.let { throw it }
+        val run = temperatureNow - 2 * 3600
+        val hours = temperatureHours ?: (-3..3).map { k ->
+            val id = temperatureNow + k * 3600L
+            ServerTemperatureHour(id, if (id < run) run - 6 * 3600 else run)
+        }
+        return ServerTemperature(
+            hours = hours.shuffled(),
+            now = temperatureNow,
+            bands = listOf(ServerTemperatureBand(-30.0, "#3c005a"), ServerTemperatureBand(-28.0, "#4a0a6b")),
+        )
+    }
+
+    override suspend fun temperaturePoint(latitude: Double, longitude: Double, hourId: Long): ServerTemperaturePoint {
+        calls++
+        temperatureFailure?.let { throw it }
+        pointRequests += Triple(latitude, longitude, hourId)
+        return ServerTemperaturePoint(temperature = 7.84 + (hourId - temperatureNow) / 3600, groundMetres = 307)
+    }
 }
 
 class RadarRepositoryTest {
@@ -259,5 +287,56 @@ class RadarRepositoryTest {
         server.forecastBase = NEWEST - 300 // the frame list and the forecast do not match (race)
         val layers = repository.load(place, serverOn).getOrThrow()
         assertTrue(layers.frames.none { it.isForecast })
+    }
+
+    @Test
+    fun `temperature maps need the home server and never contact anything without it`() = runTest {
+        val result = repository.loadTemperature(AppSettings())
+        assertEquals(RadarRepository.NEEDS_SERVER, result.exceptionOrNull()?.message)
+        assertTrue(repository.temperatureAt(AppSettings(), 41.9, 12.5, 1L).isFailure)
+        assertEquals(0, server.calls)
+        assertTrue(requestedBases.isEmpty())
+    }
+
+    @Test
+    fun `temperature hours are sorted, open on now and carry their run in the tile url`() = runTest {
+        val layers = repository.loadTemperature(serverOn).getOrThrow()
+        assertEquals(7, layers.hours.size)
+        assertEquals(layers.hours.sortedBy { it.id }, layers.hours)
+        assertEquals(3, layers.nowIndex)
+        val now = server.temperatureNow
+        val run = now - 2 * 3600
+        assertEquals("http://100.95.20.125:8080/temperature/$run/$now/temp2c/{z}/{x}/{y}.png", layers.hours[3].tileUrl)
+        assertTrue("the oldest hour comes from the run before", layers.hours[0].tileUrl.contains("/${run - 6 * 3600}/"))
+        assertEquals(2, layers.legend.size)
+        assertEquals(0xFF3C005A.toInt(), layers.legend[0].colorArgb)
+    }
+
+    @Test
+    fun `without the current hour the closest one is chosen`() = runTest {
+        val now = server.temperatureNow
+        server.temperatureHours = listOf(now - 7200, now + 3600, now + 7200).map { ServerTemperatureHour(it, now - 10_800) }
+        assertEquals(1, repository.loadTemperature(serverOn).getOrThrow().nowIndex)
+    }
+
+    @Test
+    fun `temperature problems are explained`() = runTest {
+        server.temperatureHours = emptyList()
+        assertTrue(repository.loadTemperature(serverOn).exceptionOrNull()!!.message!!.contains("still collecting"))
+
+        server.temperatureFailure = HttpException(Response.error<Any>(404, "".toResponseBody()))
+        assertTrue(repository.loadTemperature(serverOn).exceptionOrNull()!!.message!!.contains("update it"))
+
+        val tailscaleOff = RadarRepository(rainViewer, vpnActive = { false }) { server }
+        server.temperatureFailure = IOException("timeout")
+        assertTrue(tailscaleOff.loadTemperature(serverOn).exceptionOrNull()!!.message!!.contains("Tailscale is off"))
+    }
+
+    @Test
+    fun `the tapped point is asked for the chosen hour`() = runTest {
+        val value = repository.temperatureAt(serverOn, 46.17, 9.87, server.temperatureNow).getOrThrow()
+        assertEquals(7.84, value.celsius!!, 0.001)
+        assertEquals(307, value.groundMetres)
+        assertEquals(Triple(46.17, 9.87, server.temperatureNow), server.pointRequests.single())
     }
 }

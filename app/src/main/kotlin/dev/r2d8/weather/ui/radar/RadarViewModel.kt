@@ -9,12 +9,16 @@ import dev.r2d8.weather.WeatherApplication
 import dev.r2d8.weather.data.radar.RadarRepository
 import dev.r2d8.weather.domain.AppSettings
 import dev.r2d8.weather.domain.Basemap
+import dev.r2d8.weather.domain.MapOverlay
 import dev.r2d8.weather.domain.MapStyle
 import dev.r2d8.weather.domain.Place
+import dev.r2d8.weather.domain.PointTemperature
 import dev.r2d8.weather.domain.RadarFrame
 import dev.r2d8.weather.domain.RadarLayerSet
 import dev.r2d8.weather.domain.RadarPalette
 import dev.r2d8.weather.domain.SavedPlace
+import dev.r2d8.weather.domain.TemperatureHour
+import dev.r2d8.weather.domain.TemperatureLayerSet
 import dev.r2d8.weather.domain.resolvePlace
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -28,6 +32,29 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+/** A point the user tapped on the temperature map, and what the server said about it. */
+data class TappedPoint(
+    val latitude: Double,
+    val longitude: Double,
+    val loading: Boolean = true,
+    val value: PointTemperature? = null,
+    val failed: Boolean = false,
+)
+
+/** The temperature overlay: loaded only when the user picks it (it costs data). */
+data class TemperatureUi(
+    val loading: Boolean = false,
+    val layers: TemperatureLayerSet? = null,
+    /** Why it cannot be shown, written for the user. */
+    val problem: String? = null,
+    /** Index into the hours; null means the current hour. */
+    val selected: Int? = null,
+    val tapped: TappedPoint? = null,
+) {
+    val index: Int get() = layers?.let { (selected ?: it.nowIndex).coerceIn(0, it.hours.size - 1) } ?: 0
+    val hour: TemperatureHour? get() = layers?.hours?.getOrNull(index)
+}
 
 /** What the radar screen shows. [frames] is what the map should load: all of them, or only the newest. */
 data class RadarUiState(
@@ -55,6 +82,10 @@ data class RadarUiState(
      * user presses Play, so looking at the map costs one picture's tiles, not thirteen.
      */
     val historyPending: Boolean = false,
+    /** The home server is switched on, so the temperature overlay can be offered. */
+    val serverOn: Boolean = false,
+    val overlay: MapOverlay = MapOverlay.Rain,
+    val temperature: TemperatureUi = TemperatureUi(),
 ) {
     val canPlay: Boolean get() = historyAllowed && frames.size > 1 && framesReady
     val newestIndex: Int get() = (frames.size - 1).coerceAtLeast(0)
@@ -66,7 +97,7 @@ data class RadarUiState(
 
 class RadarViewModel(
     private val radar: RadarRepository,
-    settings: Flow<AppSettings>,
+    private val settings: Flow<AppSettings>,
     places: Flow<List<SavedPlace>>,
     metered: Flow<Boolean>,
     private val saveBasemap: suspend (Basemap) -> Unit,
@@ -109,10 +140,14 @@ class RadarViewModel(
     private val load = MutableStateFlow<Load>(Load.Loading)
     private val interaction = MutableStateFlow(Interaction())
     private val retry = MutableStateFlow(0)
+    private val overlay = MutableStateFlow(MapOverlay.Rain)
+    private val temperature = MutableStateFlow(TemperatureUi())
     private var playJob: Job? = null
     private var loadJob: Job? = null
+    private var temperatureJob: Job? = null
+    private var pointJob: Job? = null
 
-    val uiState: StateFlow<RadarUiState> = combine(settings, places, metered, load, interaction) {
+    private val radarState: Flow<RadarUiState> = combine(settings, places, metered, load, interaction) {
             appSettings, saved, isMetered, loadState, ui ->
         val layers = (loadState as? Load.Loaded)?.layers
         val allowed = !isMetered || appSettings.radarHistoryOnMobileData || ui.allowMobileOnce
@@ -141,6 +176,16 @@ class RadarViewModel(
             historyAllowed = allowed,
             historyPending = layers != null && allowed && !loadAll && layers.frames.size > 1,
         )
+    }
+
+    val uiState: StateFlow<RadarUiState> = combine(radarState, settings, overlay, temperature) { radarUi, appSettings, chosen, temp ->
+        val serverOn = appSettings.homeServerEnabled && appSettings.homeServerAddress.isNotBlank()
+        radarUi.copy(
+            serverOn = serverOn,
+            // Switching the server off in Settings brings the rain back.
+            overlay = if (serverOn) chosen else MapOverlay.Rain,
+            temperature = temp,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RadarUiState())
 
     init {
@@ -164,6 +209,11 @@ class RadarViewModel(
             opacity = interaction.value.opacity,
             allowMobileOnce = interaction.value.allowMobileOnce,
         )
+        // The server or place may have changed: the temperature maps are fetched again if shown.
+        temperatureJob?.cancel()
+        pointJob?.cancel()
+        temperature.value = TemperatureUi()
+        if (overlay.value == MapOverlay.Temperature) loadTemperature()
         val place = request.place
         if (place == null) {
             load.value = Load.NoPlace
@@ -180,6 +230,64 @@ class RadarViewModel(
 
     fun retry() {
         retry.update { it + 1 }
+    }
+
+    /** Rain or temperature. The temperature maps are only fetched the first time they are picked. */
+    fun setOverlay(value: MapOverlay) {
+        pause()
+        overlay.value = value
+        val t = temperature.value
+        if (value == MapOverlay.Temperature && t.layers == null && !t.loading) loadTemperature()
+    }
+
+    fun retryTemperature() = loadTemperature()
+
+    private fun loadTemperature() {
+        temperatureJob?.cancel()
+        temperature.update { it.copy(loading = true, problem = null) }
+        temperatureJob = viewModelScope.launch {
+            radar.loadTemperature(settings.first()).fold(
+                onSuccess = { layers ->
+                    temperature.update { it.copy(loading = false, layers = layers, problem = null, selected = null) }
+                    refreshTapped()
+                },
+                onFailure = { e ->
+                    temperature.update { it.copy(loading = false, problem = e.message ?: "Temperature maps are not available.") }
+                },
+            )
+        }
+    }
+
+    /** The user let go of the hour slider: show that hour (only then are its tiles fetched). */
+    fun selectHour(index: Int) {
+        temperature.update { it.copy(selected = index) }
+        refreshTapped()
+    }
+
+    /** A tap on the map: on the temperature map it asks for the value at that point. */
+    fun onMapTap(latitude: Double, longitude: Double) {
+        if (uiState.value.overlay != MapOverlay.Temperature || temperature.value.layers == null) return
+        temperature.update { it.copy(tapped = TappedPoint(latitude, longitude)) }
+        refreshTapped()
+    }
+
+    fun clearTapped() {
+        pointJob?.cancel()
+        temperature.update { it.copy(tapped = null) }
+    }
+
+    private fun refreshTapped() {
+        pointJob?.cancel()
+        val current = temperature.value
+        val point = current.tapped ?: return
+        val hour = current.hour ?: return
+        temperature.update { it.copy(tapped = point.copy(loading = true, failed = false)) }
+        pointJob = viewModelScope.launch {
+            val result = radar.temperatureAt(settings.first(), point.latitude, point.longitude, hour.id)
+            temperature.update {
+                it.copy(tapped = point.copy(loading = false, value = result.getOrNull(), failed = result.isFailure))
+            }
+        }
     }
 
     fun toggleBasemap() {

@@ -8,6 +8,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -20,6 +21,7 @@ import dev.r2d8.weather.domain.MapStyle
 import dev.r2d8.weather.domain.Place
 import dev.r2d8.weather.domain.RadarFrame
 import dev.r2d8.weather.domain.RadarLayerSet
+import dev.r2d8.weather.domain.TemperatureHour
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
@@ -37,11 +39,20 @@ import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.Point
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 private const val RADAR_LAYER = "radar-layer-"
 private const val RADAR_SOURCE = "radar-src-"
 private const val PLACE_SOURCE = "place-src"
 private const val PLACE_LAYER = "place-layer"
+private const val TEMPERATURE_LAYER = "temperature-layer-"
+private const val TEMPERATURE_SOURCE = "temperature-src-"
+private const val TAPPED_SOURCE = "tapped-src"
+private const val TAPPED_LAYER = "tapped-layer"
+
+/** One hour of the temperature map to draw instead of the radar. */
+data class TemperatureOverlay(val hour: TemperatureHour, val maxZoom: Int, val tileSize: Int, val attribution: String)
 
 private const val DEFAULT_ZOOM = 6.5
 private const val MIN_ZOOM = 3.0
@@ -72,13 +83,19 @@ fun RadarMap(
     place: Place,
     basemap: Basemap,
     mapStyle: MapStyle,
-    layers: RadarLayerSet,
+    /** The radar, or null while only the temperature map is shown. */
+    layers: RadarLayerSet?,
     frames: List<RadarFrame>,
     index: Int,
     opacity: Float,
     /** Height in pixels of the controls drawn over the bottom of the map; the map's credits stay above it. */
     bottomInsetPx: Int,
     onIdle: () -> Unit,
+    /** A temperature hour to draw (pass no [frames] at the same time). */
+    temperature: TemperatureOverlay? = null,
+    /** A point marked on the map (the tapped temperature point). */
+    marker: Pair<Double, Double>? = null,
+    onTap: (latitude: Double, longitude: Double) -> Unit = { _, _ -> },
     /** The address to load a map style from: the pinned copy when there is one (see MapDataRepository). */
     styleUrlOf: suspend (MapStyle) -> String,
     modifier: Modifier = Modifier,
@@ -99,6 +116,44 @@ fun RadarMap(
         val idle = MapView.OnDidBecomeIdleListener { onIdle() }
         mapView.addOnDidBecomeIdleListener(idle)
         onDispose { mapView.removeOnDidBecomeIdleListener(idle) }
+    }
+
+    // The latest callback, so the listener added once always calls the current one.
+    val currentOnTap by rememberUpdatedState(onTap)
+    DisposableEffect(map) {
+        val m = map ?: return@DisposableEffect onDispose {}
+        val listener = MapLibreMap.OnMapClickListener { point ->
+            currentOnTap(point.latitude, point.longitude)
+            false
+        }
+        m.addOnMapClickListener(listener)
+        onDispose { m.removeOnMapClickListener(listener) }
+    }
+
+    // A new hour is added on top of the previous one, which is removed once the map has loaded the
+    // new tiles: the map never goes blank between hours.
+    LaunchedEffect(style, temperature) {
+        val s = style ?: return@LaunchedEffect
+        installTemperature(s, temperature, opacity)
+        if (temperature == null) return@LaunchedEffect
+        val current = "$TEMPERATURE_LAYER${temperature.hour.id}"
+        val m = map ?: return@LaunchedEffect
+        suspendCancellableCoroutine { continuation ->
+            val idle = object : MapView.OnDidBecomeIdleListener {
+                override fun onDidBecomeIdle() {
+                    mapView.removeOnDidBecomeIdleListener(this)
+                    if (continuation.isActive) continuation.resume(Unit)
+                }
+            }
+            mapView.addOnDidBecomeIdleListener(idle)
+            continuation.invokeOnCancellation { mapView.removeOnDidBecomeIdleListener(idle) }
+        }
+        if (m.style === s) removeTemperatureLayers(s, except = current)
+    }
+
+    LaunchedEffect(style, marker) {
+        val s = style ?: return@LaunchedEffect
+        installTappedMarker(s, marker)
     }
 
     LaunchedEffect(map, basemap, mapStyle) {
@@ -128,6 +183,8 @@ fun RadarMap(
             s.getLayerAs<RasterLayer>("$RADAR_LAYER$i")
                 ?.setProperties(PropertyFactory.rasterOpacity(if (i == index) opacity else 0f))
         }
+        s.layers.filter { it.id.startsWith(TEMPERATURE_LAYER) }
+            .forEach { it.setProperties(PropertyFactory.rasterOpacity(opacity)) }
     }
 
     // Keep MapLibre's logo and the (i) credits button visible above the controls card.
@@ -172,9 +229,10 @@ private fun makeSatelliteHybrid(style: Style) {
 }
 
 /** Replaces any previous radar layers: one source and one raster layer per frame, under the labels. */
-private fun installRadar(style: Style, layers: RadarLayerSet, frames: List<RadarFrame>) {
+private fun installRadar(style: Style, layers: RadarLayerSet?, frames: List<RadarFrame>) {
     style.layers.filter { it.id.startsWith(RADAR_LAYER) }.forEach { style.removeLayer(it.id) }
     style.sources.filter { it.id.startsWith(RADAR_SOURCE) }.forEach { style.removeSource(it.id) }
+    if (layers == null) return
     // On the vector map, put the radar below the first label layer so place names stay readable.
     val firstLabel = style.layers.firstOrNull { it is SymbolLayer }?.id
     frames.forEachIndexed { i, frame ->
@@ -189,6 +247,60 @@ private fun installRadar(style: Style, layers: RadarLayerSet, frames: List<Radar
         )
         if (firstLabel != null) style.addLayerBelow(layer, firstLabel) else style.addLayer(layer)
     }
+}
+
+/**
+ * Adds the layer for [overlay]'s hour (if not there yet) under the labels; older hours stay until
+ * the caller removes them. Null removes all temperature layers.
+ */
+private fun installTemperature(style: Style, overlay: TemperatureOverlay?, opacity: Float) {
+    if (overlay == null) {
+        removeTemperatureLayers(style, except = null)
+        return
+    }
+    val id = overlay.hour.id
+    if (style.getLayer("$TEMPERATURE_LAYER$id") != null) return
+    val tiles = TileSet("2.2.0", overlay.hour.tileUrl).apply {
+        maxZoom = overlay.maxZoom.toFloat()
+        attribution = overlay.attribution
+    }
+    style.addSource(RasterSource("$TEMPERATURE_SOURCE$id", tiles, overlay.tileSize))
+    val layer = RasterLayer("$TEMPERATURE_LAYER$id", "$TEMPERATURE_SOURCE$id").withProperties(
+        PropertyFactory.rasterOpacity(opacity),
+        PropertyFactory.rasterFadeDuration(0f),
+    )
+    val firstLabel = style.layers.firstOrNull { it is SymbolLayer }?.id
+    if (firstLabel != null) style.addLayerBelow(layer, firstLabel) else style.addLayer(layer)
+}
+
+private fun removeTemperatureLayers(style: Style, except: String?) {
+    style.layers.filter { it.id.startsWith(TEMPERATURE_LAYER) && it.id != except }.forEach { style.removeLayer(it.id) }
+    val keepSource = except?.replace(TEMPERATURE_LAYER, TEMPERATURE_SOURCE)
+    style.sources.filter { it.id.startsWith(TEMPERATURE_SOURCE) && it.id != keepSource }.forEach { style.removeSource(it.id) }
+}
+
+/** A small ring where the user tapped on the temperature map; null removes it. */
+private fun installTappedMarker(style: Style, marker: Pair<Double, Double>?) {
+    val existing = style.getSourceAs<GeoJsonSource>(TAPPED_SOURCE)
+    if (marker == null) {
+        style.removeLayer(TAPPED_LAYER)
+        if (existing != null) style.removeSource(existing)
+        return
+    }
+    val feature = Feature.fromGeometry(Point.fromLngLat(marker.second, marker.first))
+    if (existing != null) {
+        existing.setGeoJson(feature)
+        return
+    }
+    style.addSource(GeoJsonSource(TAPPED_SOURCE, feature))
+    style.addLayer(
+        CircleLayer(TAPPED_LAYER, TAPPED_SOURCE).withProperties(
+            PropertyFactory.circleRadius(6f),
+            PropertyFactory.circleColor(Color.TRANSPARENT),
+            PropertyFactory.circleStrokeColor(Color.BLACK),
+            PropertyFactory.circleStrokeWidth(3f),
+        ),
+    )
 }
 
 /** A dot at the selected place, drawn above everything. */

@@ -5,6 +5,7 @@ import dev.r2d8.weather.data.radar.FakeServer
 import dev.r2d8.weather.data.radar.RadarRepository
 import dev.r2d8.weather.domain.AppSettings
 import dev.r2d8.weather.domain.Basemap
+import dev.r2d8.weather.domain.MapOverlay
 import dev.r2d8.weather.domain.Place
 import dev.r2d8.weather.domain.RadarSourceKind
 import dev.r2d8.weather.domain.SavedPlace
@@ -271,5 +272,81 @@ class RadarViewModelTest {
         advanceTimeBy(601)
         assertTrue(vm.state().frames[vm.state().index].isForecast)
         vm.pause()
+    }
+
+    @Test
+    fun `temperature is offered only with the server and loaded only when picked`() = runTest(dispatcher, timeout = 15.seconds) {
+        val vm = viewModel()
+        runCurrent()
+        assertFalse(vm.state().serverOn)
+
+        settings.value = settings.value.copy(homeServerEnabled = true, homeServerAddress = "100.95.20.125:8080")
+        runCurrent()
+        assertTrue(vm.state().serverOn)
+        val before = server.calls
+        assertNull("nothing fetched before the user picks it", vm.state().temperature.layers)
+
+        vm.setOverlay(MapOverlay.Temperature)
+        runCurrent()
+        val s = vm.state()
+        assertEquals(MapOverlay.Temperature, s.overlay)
+        assertEquals(7, s.temperature.layers!!.hours.size)
+        assertEquals(3, s.temperature.index)
+        assertEquals(before + 1, server.calls)
+
+        // Switching back and forth does not fetch the list again.
+        vm.setOverlay(MapOverlay.Rain)
+        vm.setOverlay(MapOverlay.Temperature)
+        runCurrent()
+        assertEquals(before + 1, server.calls)
+
+        // Switching the server off brings the rain back.
+        settings.value = settings.value.copy(homeServerEnabled = false)
+        runCurrent()
+        assertEquals(MapOverlay.Rain, vm.state().overlay)
+    }
+
+    @Test
+    fun `a tapped point follows the chosen hour`() = runTest(dispatcher, timeout = 15.seconds) {
+        settings.value = settings.value.copy(homeServerEnabled = true, homeServerAddress = "100.95.20.125:8080")
+        val vm = viewModel()
+        runCurrent()
+        vm.onMapTap(46.17, 9.87)
+        runCurrent()
+        assertNull("taps on the rain map are ignored", vm.state().temperature.tapped)
+
+        vm.setOverlay(MapOverlay.Temperature)
+        runCurrent()
+        vm.onMapTap(46.17, 9.87)
+        runCurrent()
+        val tapped = vm.state().temperature.tapped!!
+        assertFalse(tapped.loading)
+        assertEquals(7.84, tapped.value!!.celsius!!, 0.001)
+
+        vm.selectHour(5)
+        runCurrent()
+        assertEquals(9.84, vm.state().temperature.tapped!!.value!!.celsius!!, 0.001)
+        assertEquals(server.temperatureNow + 2 * 3600, server.pointRequests.last().third)
+
+        vm.clearTapped()
+        runCurrent()
+        assertNull(vm.state().temperature.tapped)
+    }
+
+    @Test
+    fun `a temperature problem is shown and can be retried`() = runTest(dispatcher, timeout = 15.seconds) {
+        settings.value = settings.value.copy(homeServerEnabled = true, homeServerAddress = "100.95.20.125:8080")
+        server.temperatureHours = emptyList()
+        val vm = viewModel()
+        runCurrent()
+        vm.setOverlay(MapOverlay.Temperature)
+        runCurrent()
+        assertTrue(vm.state().temperature.problem!!.contains("still collecting"))
+
+        server.temperatureHours = null
+        vm.retryTemperature()
+        runCurrent()
+        assertNull(vm.state().temperature.problem)
+        assertEquals(7, vm.state().temperature.layers!!.hours.size)
     }
 }
