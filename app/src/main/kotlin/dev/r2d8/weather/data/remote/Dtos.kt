@@ -9,6 +9,9 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class ForecastResponse(
+    /** Centre of the model grid cell used, within a few km of the requested point. */
+    val latitude: Double? = null,
+    val longitude: Double? = null,
     val timezone: String,
     val current: CurrentDto,
     @SerialName("minutely_15") val minutely15: Minutely15Dto? = null,
@@ -22,10 +25,14 @@ data class CurrentDto(
     @SerialName("temperature_2m") val temperature: Double? = null,
     @SerialName("apparent_temperature") val apparentTemperature: Double? = null,
     @SerialName("relative_humidity_2m") val humidity: Double? = null,
+    @SerialName("dew_point_2m") val dewPoint: Double? = null,
     @SerialName("is_day") val isDay: Int? = null,
     val precipitation: Double? = null,
     @SerialName("weather_code") val weatherCode: Int? = null,
     @SerialName("cloud_cover") val cloudCover: Double? = null,
+    @SerialName("cloud_cover_low") val cloudCoverLow: Double? = null,
+    @SerialName("cloud_cover_mid") val cloudCoverMid: Double? = null,
+    @SerialName("cloud_cover_high") val cloudCoverHigh: Double? = null,
     @SerialName("pressure_msl") val pressure: Double? = null,
     @SerialName("wind_speed_10m") val windSpeed: Double? = null,
     @SerialName("wind_direction_10m") val windDirection: Double? = null,

@@ -24,8 +24,9 @@ interface ForecastApi {
     ): ForecastResponse
 
     companion object {
-        const val CURRENT = "temperature_2m,apparent_temperature,relative_humidity_2m,is_day,precipitation," +
-            "weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m"
+        const val CURRENT = "temperature_2m,apparent_temperature,relative_humidity_2m,dew_point_2m,is_day," +
+            "precipitation,weather_code,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,pressure_msl," +
+            "wind_speed_10m,wind_direction_10m,wind_gusts_10m"
         const val MINUTELY_15 = "precipitation"
         const val HOURLY = "temperature_2m,precipitation_probability,precipitation,weather_code,is_day," +
             "wind_speed_10m,wind_gusts_10m,uv_index"

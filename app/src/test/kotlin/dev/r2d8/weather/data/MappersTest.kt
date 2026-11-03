@@ -22,6 +22,23 @@ class MappersTest {
     private val fetchedAt = Instant.parse("2026-10-23T22:00:00Z")
 
     @Test
+    fun `keeps the place, dew point and cloud layers`() {
+        val text = resource("forecast_rome.json").replace(
+            "\"cloud_cover\":75,",
+            "\"cloud_cover\":75,\"cloud_cover_low\":0,\"cloud_cover_mid\":5,\"cloud_cover_high\":96,\"dew_point_2m\":14.3,",
+        )
+        val report = json.decodeFromString<ForecastResponse>(text).toReport(null, fetchedAt)
+
+        assertEquals(41.923637, report.latitude!!, 1e-9)
+        assertEquals(12.477454, report.longitude!!, 1e-9)
+        assertEquals(14.3, report.current.dewPoint!!, 0.0)
+        assertEquals(75, report.current.cloudCover)
+        assertEquals(0, report.current.cloudCoverLow)
+        assertEquals(5, report.current.cloudCoverMid)
+        assertEquals(96, report.current.cloudCoverHigh)
+    }
+
+    @Test
     fun `maps a real forecast response`() {
         val report = forecast.toReport(air, fetchedAt)
 

@@ -25,16 +25,22 @@ fun ForecastResponse.toReport(air: AirQualityResponse?, fetchedAt: Instant): Wea
     val firstDate = daily.time.firstOrNull()?.let { Instant.ofEpochSecond(it).atZone(zone).toLocalDate() }
     return WeatherReport(
         zone = zone,
+        latitude = latitude,
+        longitude = longitude,
         fetchedAt = fetchedAt,
         current = CurrentConditions(
             time = Instant.ofEpochSecond(current.time),
             temperature = current.temperature,
             apparentTemperature = current.apparentTemperature,
             humidity = current.humidity?.roundToInt(),
+            dewPoint = current.dewPoint,
             isDay = current.isDay != 0,
             precipitation = current.precipitation,
             condition = WeatherCondition.fromCode(current.weatherCode),
             cloudCover = current.cloudCover?.roundToInt(),
+            cloudCoverLow = current.cloudCoverLow?.roundToInt(),
+            cloudCoverMid = current.cloudCoverMid?.roundToInt(),
+            cloudCoverHigh = current.cloudCoverHigh?.roundToInt(),
             pressure = current.pressure,
             windSpeed = current.windSpeed,
             windDirection = current.windDirection?.roundToInt(),

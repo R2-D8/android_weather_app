@@ -14,6 +14,9 @@ data class Place(val name: String, val latitude: Double, val longitude: Double) 
 /** Everything the main screen shows, already converted to app types. Units: °C, km/h, mm, hPa. */
 data class WeatherReport(
     val zone: ZoneId,
+    /** Where the forecast is for (the model's grid cell); null in reports cached before this was kept. */
+    val latitude: Double? = null,
+    val longitude: Double? = null,
     val fetchedAt: Instant,
     val current: CurrentConditions,
     /** 15-minute precipitation slots, see [RainSlot]. Empty if the model has no 15-minute data. */
@@ -29,10 +32,15 @@ data class CurrentConditions(
     val temperature: Double?,
     val apparentTemperature: Double?,
     val humidity: Int?,
+    val dewPoint: Double? = null,
     val isDay: Boolean,
     val precipitation: Double?,
     val condition: WeatherCondition,
+    /** Total cloud cover, then by layer: low (below ~2 km), mid (~2-6 km), high (thin ice cloud above ~6 km). */
     val cloudCover: Int?,
+    val cloudCoverLow: Int? = null,
+    val cloudCoverMid: Int? = null,
+    val cloudCoverHigh: Int? = null,
     val pressure: Double?,
     val windSpeed: Double?,
     val windDirection: Int?,

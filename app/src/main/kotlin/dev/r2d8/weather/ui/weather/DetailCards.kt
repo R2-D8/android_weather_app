@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import dev.r2d8.weather.R
 import dev.r2d8.weather.domain.Categories
 import dev.r2d8.weather.domain.DetailCardType
+import dev.r2d8.weather.domain.Moon
 import dev.r2d8.weather.domain.WeatherReport
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -118,11 +119,20 @@ private fun detailContent(type: DetailCardType, report: WeatherReport, now: Inst
             )
         }
 
+        DetailCardType.Moon -> moonContent(report, now)
+
+        // Relative humidity says how close the air is to saturation, not how much water it holds:
+        // cold air near 100% feels dry. The dew point is what tells how humid it feels.
+        // Cloud cover is the model's, not observed; the layers show when it is only thin high cloud.
         DetailCardType.Humidity -> DetailContent(
             title = "Humidity",
             icon = R.drawable.ic_humidity_mid,
             value = current.humidity.asPercent(),
-            lines = listOfNotNull(current.cloudCover?.let { "Cloud cover $it%" }),
+            lines = listOfNotNull(
+                current.dewPoint?.let { "Dew point ${it.asTemperature()}" },
+                current.cloudCover?.let { "Clouds $it% (forecast)" },
+                cloudLayers(current.cloudCoverLow, current.cloudCoverMid, current.cloudCoverHigh),
+            ),
         )
 
         DetailCardType.Pressure -> DetailContent(
@@ -158,6 +168,40 @@ private fun detailContent(type: DetailCardType, report: WeatherReport, now: Inst
             )
         }
     }
+}
+
+/** "Low 0 · mid 5 · high 96%", or null without layer data. */
+private fun cloudLayers(low: Int?, mid: Int?, high: Int?): String? {
+    if (low == null || mid == null || high == null) return null
+    return "Low $low · mid $mid · high $high%"
+}
+
+/** Today's moonrise and moonset in time order, and the phase now. Needs the report's coordinates. */
+private fun moonContent(report: WeatherReport, now: Instant): DetailContent? {
+    val latitude = report.latitude ?: return null
+    val longitude = report.longitude ?: return null
+    val today = now.atZone(report.zone).toLocalDate()
+    val day = Moon.day(today, report.zone, latitude, longitude)
+    val phase = Moon.phase(now)
+    val events = listOfNotNull(
+        day.rise?.let { it to "Rise ${it.asClock(report.zone)}" },
+        day.set?.let { it to "Set ${it.asClock(report.zone)}" },
+    ).sortedBy { it.first }.map { it.second }
+    // The Moon rises about 50 minutes later each day, so once a month a day has no rise (or no set).
+    val times = when {
+        events.isNotEmpty() -> events + listOfNotNull(
+            "No moonrise today".takeIf { day.rise == null },
+            "No moonset today".takeIf { day.set == null },
+        )
+        day.upAllDay -> listOf("Up all day")
+        else -> listOf("Below the horizon all day")
+    }
+    return DetailContent(
+        title = "Moon",
+        icon = R.drawable.ic_clear_night,
+        value = "${phase.percent}% lit",
+        lines = listOf(phase.name) + times,
+    )
 }
 
 private fun Double.format0() = String.format(Locale.ROOT, "%.0f", this)

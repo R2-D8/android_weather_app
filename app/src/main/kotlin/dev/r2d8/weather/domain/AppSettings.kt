@@ -30,6 +30,7 @@ enum class DetailCardType(val label: String) {
     Wind("Wind"),
     UvIndex("UV index"),
     Sun("Sunrise and sunset"),
+    Moon("Moonrise, moonset and phase"),
     Humidity("Humidity"),
     Pressure("Pressure"),
     AirQuality("Air quality"),
