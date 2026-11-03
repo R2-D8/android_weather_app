@@ -123,15 +123,17 @@ private fun detailContent(type: DetailCardType, report: WeatherReport, now: Inst
 
         // Relative humidity says how close the air is to saturation, not how much water it holds:
         // cold air near 100% feels dry. The dew point is what tells how humid it feels.
-        // Cloud cover is the model's, not observed; the layers show when it is only thin high cloud.
+        // Cloud cover is the model's; naming its main layer shows when it is only thin high cloud.
         DetailCardType.Humidity -> DetailContent(
             title = "Humidity",
             icon = R.drawable.ic_humidity_mid,
             value = current.humidity.asPercent(),
             lines = listOfNotNull(
                 current.dewPoint?.let { "Dew point ${it.asTemperature()}" },
-                current.cloudCover?.let { "Clouds $it% (forecast)" },
-                cloudLayers(current.cloudCoverLow, current.cloudCoverMid, current.cloudCoverHigh),
+                current.cloudCover?.let { total ->
+                    val layer = mainCloudLayer(current.cloudCoverLow, current.cloudCoverMid, current.cloudCoverHigh)
+                    if (layer == null || total < MIN_CLOUD_FOR_LAYER) "Clouds $total%" else "Clouds $total% · $layer"
+                },
             ),
         )
 
@@ -170,10 +172,16 @@ private fun detailContent(type: DetailCardType, report: WeatherReport, now: Inst
     }
 }
 
-/** "Low 0 · mid 5 · high 96%", or null without layer data. */
-private fun cloudLayers(low: Int?, mid: Int?, high: Int?): String? {
+private const val MIN_CLOUD_FOR_LAYER = 10
+
+/** "low", "mid" or "high": the layer with the most cloud (ties go to the lower one), or null without layer data. */
+internal fun mainCloudLayer(low: Int?, mid: Int?, high: Int?): String? {
     if (low == null || mid == null || high == null) return null
-    return "Low $low · mid $mid · high $high%"
+    return when {
+        low >= mid && low >= high -> "low"
+        mid >= high -> "mid"
+        else -> "high"
+    }
 }
 
 /** Today's moonrise and moonset in time order, and the phase now. Needs the report's coordinates. */
