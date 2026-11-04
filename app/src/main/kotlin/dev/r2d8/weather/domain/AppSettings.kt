@@ -26,15 +26,51 @@ enum class DayDetail(val label: String) {
 }
 
 /** The small detail cards under the forecast. */
-enum class DetailCardType(val label: String) {
-    Wind("Wind"),
-    UvIndex("UV index"),
-    Sun("Sunrise and sunset"),
-    Moon("Moonrise, moonset and phase"),
-    Humidity("Humidity"),
-    Pressure("Pressure"),
-    AirQuality("Air quality"),
-    Pollen("Pollen"),
+enum class DetailCardType(val label: String, val title: String) {
+    Wind("Wind", "Wind"),
+    UvIndex("UV index", "UV index"),
+    Sun("Sunrise and sunset", "Sun"),
+    Moon("Moonrise, moonset and phase", "Moon"),
+    Humidity("Humidity", "Humidity"),
+    Pressure("Pressure", "Pressure"),
+    AirQuality("Air quality", "Air quality"),
+    Pollen("Pollen", "Pollen"),
+}
+
+/**
+ * [card] moved [by] places (negative: earlier) in this order, clamped to the ends. The detail
+ * cards are laid out two per row in this order.
+ */
+fun List<DetailCardType>.moved(card: DetailCardType, by: Int): List<DetailCardType> {
+    val from = indexOf(card)
+    if (from < 0) return this
+    val to = (from + by).coerceIn(0, lastIndex)
+    return toMutableList().apply { add(to, removeAt(from)) }
+}
+
+/**
+ * [card] moved one step up ([down] false) or down. A shown card jumps past hidden ones to swap with
+ * the next shown card, so every tap changes the screen; a hidden card moves one place.
+ */
+fun List<DetailCardType>.step(card: DetailCardType, down: Boolean, visible: Set<DetailCardType>): List<DetailCardType> {
+    val from = indexOf(card)
+    if (from < 0) return this
+    val direction = if (down) 1 else -1
+    if (card !in visible) return moved(card, direction)
+    var target = from + direction
+    while (target in indices && this[target] !in visible) target += direction
+    if (target !in indices) return this
+    return moved(card, target - from)
+}
+
+/** Whether [step] would change anything for [card]. */
+fun List<DetailCardType>.canStep(card: DetailCardType, down: Boolean, visible: Set<DetailCardType>): Boolean =
+    step(card, down, visible) != this
+
+/** A stored order: known names in their stored order, then cards it does not name (added later) in their default order. */
+fun cardOrderOf(names: List<String>): List<DetailCardType> {
+    val known = names.mapNotNull { name -> DetailCardType.entries.firstOrNull { it.name == name } }.distinct()
+    return known + DetailCardType.entries.filter { it !in known }
 }
 
 /** Which place the main screen shows: the phone's location or one of the saved places. */
@@ -51,6 +87,8 @@ data class AppSettings(
     val palette: ColorPalette = ColorPalette.Dynamic,
     val visibleSections: Set<ForecastSection> = ForecastSection.entries.toSet(),
     val visibleCards: Set<DetailCardType> = DetailCardType.entries.toSet(),
+    /** Every card, in the order they are shown (two per row), hidden ones included. */
+    val cardOrder: List<DetailCardType> = DetailCardType.entries,
     /** Shown when a day is expanded; with none of them a day cannot be expanded. */
     val visibleDayDetails: Set<DayDetail> = DayDetail.entries.toSet(),
     val selection: PlaceSelection = PlaceSelection.Gps,

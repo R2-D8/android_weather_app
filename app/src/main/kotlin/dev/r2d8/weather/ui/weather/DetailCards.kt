@@ -19,6 +19,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -27,17 +28,28 @@ import androidx.compose.ui.unit.dp
 import dev.r2d8.weather.R
 import dev.r2d8.weather.domain.Categories
 import dev.r2d8.weather.domain.DetailCardType
-import dev.r2d8.weather.domain.Moon
+import dev.r2d8.weather.domain.DayForecast
+import dev.r2d8.weather.domain.Sky
 import dev.r2d8.weather.domain.WeatherReport
 import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 @Composable
-fun DetailCards(report: WeatherReport, now: Instant, visible: Set<DetailCardType>, modifier: Modifier = Modifier) {
-    val cards = DetailCardType.entries
-        .filter { it in visible }
-        .mapNotNull { type -> detailContent(type, report, now)?.let { type to it } }
+fun DetailCards(
+    report: WeatherReport,
+    now: Instant,
+    order: List<DetailCardType>,
+    visible: Set<DetailCardType>,
+    modifier: Modifier = Modifier,
+) {
+    // Remembered: the Sun and Moon cards compute rise and set times, which is too much for every recomposition.
+    val cards = remember(report, now, order, visible) {
+        order.filter { it in visible }.mapNotNull { type -> detailContent(type, report, now)?.let { type to it } }
+    }
     // Two cards per row, same height within a row.
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         cards.chunked(2).forEach { row ->
@@ -110,14 +122,7 @@ private fun detailContent(type: DetailCardType, report: WeatherReport, now: Inst
             }
         }
 
-        DetailCardType.Sun -> today?.let {
-            DetailContent(
-                title = "Sun",
-                icon = R.drawable.ic_wb_twilight,
-                value = it.sunrise?.asClock(report.zone) ?: "–",
-                lines = listOf("Sunset ${it.sunset?.asClock(report.zone) ?: "–"}"),
-            )
-        }
+        DetailCardType.Sun -> sunContent(report, now, today)
 
         DetailCardType.Moon -> moonContent(report, now)
 
@@ -184,32 +189,96 @@ internal fun mainCloudLayer(low: Int?, mid: Int?, high: Int?): String? {
     }
 }
 
-/** Today's moonrise and moonset in time order, and the phase now. Needs the report's coordinates. */
-private fun moonContent(report: WeatherReport, now: Instant): DetailContent? {
+/** One local day's rise and set of [body] at the report's place, or null without coordinates. */
+private fun skyDay(body: Sky.Body, report: WeatherReport, now: Instant): SkyLines? {
     val latitude = report.latitude ?: return null
     val longitude = report.longitude ?: return null
-    val today = now.atZone(report.zone).toLocalDate()
-    val day = Moon.day(today, report.zone, latitude, longitude)
-    val phase = Moon.phase(now)
-    val events = listOfNotNull(
-        day.rise?.let { it to "Rise ${it.asClock(report.zone)}" },
-        day.set?.let { it to "Set ${it.asClock(report.zone)}" },
-    ).sortedBy { it.first }.map { it.second }
-    // The Moon rises about 50 minutes later each day, so once a month a day has no rise (or no set).
-    val times = when {
-        events.isNotEmpty() -> events + listOfNotNull(
-            "No moonrise today".takeIf { day.rise == null },
-            "No moonset today".takeIf { day.set == null },
-        )
-        day.upAllDay -> listOf("Up all day")
-        else -> listOf("Below the horizon all day")
+    val zone = report.zone
+    val date = now.atZone(zone).toLocalDate()
+    val day = Sky.day(body, date, zone, latitude, longitude)
+    val endOfDay = date.plusDays(1).atStartOfDay(zone).toInstant()
+    // A day without a rise (or set) shows the next one instead.
+    val rise = day.rise ?: Sky.next(body, rising = true, endOfDay, latitude, longitude)
+    val set = day.set ?: Sky.next(body, rising = false, endOfDay, latitude, longitude)
+    return SkyLines(day, rise?.let { whenText(it, date, zone) }, set?.let { whenText(it, date, zone) }, rise, set)
+}
+
+private class SkyLines(
+    val day: Sky.Day,
+    /** "07:59" today, "tomorrow 01:24", "Thu 01:24" within a week, "15 Jan 11:35" later; null if none within a year. */
+    val rise: String?,
+    val set: String?,
+    val riseAt: Instant?,
+    val setAt: Instant?,
+)
+
+private val weekdayFormat = DateTimeFormatter.ofPattern("EEE", Locale.ENGLISH)
+private val dayMonthFormat = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH)
+
+/** [time] relative to the local [today]: just the clock today, with "tomorrow", a weekday or a date otherwise. */
+internal fun whenText(time: Instant, today: LocalDate, zone: ZoneId): String {
+    val local = time.atZone(zone)
+    val days = ChronoUnit.DAYS.between(today, local.toLocalDate())
+    val clock = time.asClock(zone)
+    return when {
+        days == 0L -> clock
+        days == 1L -> "tomorrow $clock"
+        days in 2..6 -> "${weekdayFormat.format(local)} $clock"
+        else -> "${dayMonthFormat.format(local)} $clock"
     }
-    return DetailContent(
-        title = "Moon",
-        icon = R.drawable.ic_clear_night,
-        value = "${phase.percent}% lit",
-        lines = listOf(phase.name) + times,
-    )
+}
+
+/** Sunrise as the big value and sunset below; polar night and midnight sun say so and give the next change. */
+private fun sunContent(report: WeatherReport, now: Instant, today: DayForecast?): DetailContent? {
+    val sky = skyDay(Sky.Body.Sun, report, now)
+    if (sky == null) {
+        // Reports cached before coordinates were kept: Open-Meteo's times.
+        return today?.let {
+            DetailContent(
+                title = "Sun",
+                icon = R.drawable.ic_wb_twilight,
+                value = it.sunrise?.asClock(report.zone) ?: "–",
+                lines = listOf("Sunset ${it.sunset?.asClock(report.zone) ?: "–"}"),
+            )
+        }
+    }
+    val day = sky.day
+    val value: String
+    val lines: List<String>
+    when {
+        day.rise == null && day.set == null -> {
+            value = if (day.upAllDay) "Midnight sun" else "Polar night"
+            lines = listOfNotNull(
+                if (day.upAllDay) sky.set?.let { "Sunset $it" } else sky.rise?.let { "Sunrise $it" },
+            )
+        }
+        day.rise == null -> {
+            value = "No sunrise"
+            lines = listOfNotNull("Sunset ${sky.set}", sky.rise?.let { "Sunrise $it" })
+        }
+        else -> {
+            value = sky.rise ?: "–"
+            lines = listOf("Sunset ${sky.set ?: "–"}")
+        }
+    }
+    return DetailContent(title = "Sun", icon = R.drawable.ic_wb_twilight, value = value, lines = lines)
+}
+
+/** Phase now, then today's moonrise and moonset in time order; a missing one is replaced by the next. */
+private fun moonContent(report: WeatherReport, now: Instant): DetailContent? {
+    val sky = skyDay(Sky.Body.Moon, report, now) ?: return null
+    val phase = Sky.moonPhase(now)
+    val events = listOfNotNull(
+        sky.riseAt?.let { it to "Rise ${sky.rise}" },
+        sky.setAt?.let { it to "Set ${sky.set}" },
+    ).sortedBy { it.first }.map { it.second }
+    val day = sky.day
+    val lines = listOf(phase.name) +
+        listOfNotNull(
+            "Up all day".takeIf { day.upAllDay },
+            "Below the horizon all day".takeIf { day.rise == null && day.set == null && !day.upAllDay },
+        ) + events
+    return DetailContent(title = "Moon", icon = R.drawable.ic_clear_night, value = "${phase.percent}% lit", lines = lines)
 }
 
 private fun Double.format0() = String.format(Locale.ROOT, "%.0f", this)

@@ -61,6 +61,7 @@ import dev.r2d8.weather.domain.DetailCardType
 import dev.r2d8.weather.domain.DayDetail
 import dev.r2d8.weather.domain.ForecastSection
 import dev.r2d8.weather.domain.ThemeMode
+import dev.r2d8.weather.domain.canStep
 import dev.r2d8.weather.ui.theme.swatch
 
 @Composable
@@ -88,6 +89,7 @@ fun SettingsRoute(
         onPalette = { viewModel.setPalette(it) },
         onSection = { section, visible -> viewModel.setSectionVisible(section, visible) },
         onCard = { card, visible -> viewModel.setCardVisible(card, visible) },
+        onMoveCard = { card, down -> viewModel.moveCard(card, down) },
         onDayDetail = { detail, visible -> viewModel.setDayDetailVisible(detail, visible) },
     )
 }
@@ -110,6 +112,7 @@ fun SettingsScreen(
     onPalette: (ColorPalette) -> Unit,
     onSection: (ForecastSection, Boolean) -> Unit,
     onCard: (DetailCardType, Boolean) -> Unit,
+    onMoveCard: (DetailCardType, Boolean) -> Unit,
     onDayDetail: (DayDetail, Boolean) -> Unit,
 ) {
     Scaffold(
@@ -140,9 +143,7 @@ fun SettingsScreen(
             }
 
             Header("Detail cards")
-            DetailCardType.entries.forEach { card ->
-                SwitchRow(card.label, card in settings.visibleCards) { onCard(card, it) }
-            }
+            DetailCardsSettings(settings, onCard, onMoveCard)
 
             Header("Radar")
             MapStylePicker(settings.mapStyle, onMapStyle)
@@ -184,6 +185,61 @@ private fun Header(text: String) {
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
     )
+}
+
+/** Switches with up/down arrows, and a small two-column preview of how the shown cards pair up. */
+@Composable
+private fun DetailCardsSettings(
+    settings: AppSettings,
+    onCard: (DetailCardType, Boolean) -> Unit,
+    onMove: (DetailCardType, Boolean) -> Unit,
+) {
+    val order = settings.cardOrder
+    val shown = order.filter { it in settings.visibleCards }
+    Text(
+        "Shown two per row, in this order. A card without data (no pollen, for example) is left out " +
+            "and the next one moves up.",
+        modifier = Modifier.padding(horizontal = 16.dp),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        shown.chunked(2).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                row.forEach { card ->
+                    Text(
+                        card.title,
+                        modifier = Modifier.weight(1f).clip(MaterialTheme.shapes.small)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+    order.forEach { card ->
+        val visible = card in settings.visibleCards
+        ListItem(
+            headlineContent = { Text(card.label) },
+            trailingContent = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { onMove(card, false) }, enabled = order.canStep(card, down = false, settings.visibleCards)) {
+                        Icon(painterResource(R.drawable.ic_arrow_upward), contentDescription = "Move ${card.title} up")
+                    }
+                    IconButton(onClick = { onMove(card, true) }, enabled = order.canStep(card, down = true, settings.visibleCards)) {
+                        Icon(painterResource(R.drawable.ic_arrow_downward), contentDescription = "Move ${card.title} down")
+                    }
+                    Switch(checked = visible, onCheckedChange = { onCard(card, it) })
+                }
+            },
+            modifier = Modifier.clickable { onCard(card, !visible) },
+        )
+    }
 }
 
 @Composable

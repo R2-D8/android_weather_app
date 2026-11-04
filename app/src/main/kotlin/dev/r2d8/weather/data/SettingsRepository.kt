@@ -19,6 +19,8 @@ import dev.r2d8.weather.domain.Place
 import dev.r2d8.weather.domain.PlaceSelection
 import dev.r2d8.weather.domain.RadarPalette
 import dev.r2d8.weather.domain.ThemeMode
+import dev.r2d8.weather.domain.cardOrderOf
+import dev.r2d8.weather.domain.step
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
@@ -44,6 +46,14 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setCardVisible(card: DetailCardType, visible: Boolean) =
         dataStore.edit { it[HIDDEN_CARDS] = it[HIDDEN_CARDS].orEmpty().toggled(card.name, hidden = !visible) }
+
+    /** One step up or down, see [step]; shown cards skip hidden ones. */
+    suspend fun moveCard(card: DetailCardType, down: Boolean) = dataStore.edit {
+        val hidden = it[HIDDEN_CARDS].orEmpty()
+        val visible = DetailCardType.entries.filter { c -> c.name !in hidden }.toSet()
+        val order = cardOrderOf(it[CARD_ORDER].orEmpty().split(',')).step(card, down, visible)
+        it[CARD_ORDER] = order.joinToString(",") { c -> c.name }
+    }
 
     suspend fun setDayDetailVisible(detail: DayDetail, visible: Boolean) =
         dataStore.edit { it[HIDDEN_DAY_DETAILS] = it[HIDDEN_DAY_DETAILS].orEmpty().toggled(detail.name, hidden = !visible) }
@@ -90,6 +100,7 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
             palette = this[PALETTE].toEnum(ColorPalette.Dynamic),
             visibleSections = ForecastSection.entries.filter { it.name !in hiddenSections }.toSet(),
             visibleCards = DetailCardType.entries.filter { it.name !in hiddenCards }.toSet(),
+            cardOrder = cardOrderOf(this[CARD_ORDER].orEmpty().split(',')),
             visibleDayDetails = DayDetail.entries.filter { it.name !in hiddenDayDetails }.toSet(),
             selection = this[SELECTION].toSelection(),
             homeServerEnabled = this[HOME_SERVER_ENABLED] ?: false,
@@ -121,6 +132,8 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         val PALETTE = stringPreferencesKey("palette")
         val HIDDEN_SECTIONS = stringSetPreferencesKey("hidden_sections")
         val HIDDEN_CARDS = stringSetPreferencesKey("hidden_cards")
+        /** Card names, comma-separated, in display order; cards it does not name go last. */
+        val CARD_ORDER = stringPreferencesKey("card_order")
         val HIDDEN_DAY_DETAILS = stringSetPreferencesKey("hidden_day_details")
         val SELECTION = stringPreferencesKey("selection")
         val HOME_SERVER_ENABLED = booleanPreferencesKey("home_server_enabled")

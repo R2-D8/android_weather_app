@@ -13,7 +13,7 @@ import java.time.ZoneId
 import kotlin.math.abs
 
 /** Reference times from the US Naval Observatory's API (aa.usno.navy.mil/api/rstt/oneday), fetched 2026-11-03. */
-class MoonTest {
+class SkyTest {
     private val rome = ZoneId.of("Europe/Rome")
     private val helsinki = ZoneId.of("Europe/Helsinki")
 
@@ -26,35 +26,35 @@ class MoonTest {
 
     @Test
     fun `Treviso on 3 November 2026 has a rise and a set`() {
-        val day = Moon.day(LocalDate.of(2026, 11, 3), rome, 45.72, 12.25)
+        val day = Sky.day(Sky.Body.Moon, LocalDate.of(2026, 11, 3), rome, 45.72, 12.25)
         assertClock("00:15", day.rise, rome)
         assertClock("14:19", day.set, rome)
     }
 
     @Test
     fun `Turku on 3 November 2026 has no moonrise`() {
-        val day = Moon.day(LocalDate.of(2026, 11, 3), helsinki, 60.45, 22.27)
+        val day = Sky.day(Sky.Body.Moon, LocalDate.of(2026, 11, 3), helsinki, 60.45, 22.27)
         assertNull(day.rise)
         assertClock("15:09", day.set, helsinki)
     }
 
     @Test
     fun `Treviso near new moon`() {
-        val day = Moon.day(LocalDate.of(2026, 11, 10), rome, 45.72, 12.25)
+        val day = Sky.day(Sky.Body.Moon, LocalDate.of(2026, 11, 10), rome, 45.72, 12.25)
         assertClock("08:32", day.rise, rome)
         assertClock("16:55", day.set, rome)
     }
 
     @Test
     fun `Turku with the set before the rise`() {
-        val day = Moon.day(LocalDate.of(2026, 11, 20), helsinki, 60.45, 22.27)
+        val day = Sky.day(Sky.Body.Moon, LocalDate.of(2026, 11, 20), helsinki, 60.45, 22.27)
         assertClock("14:11", day.rise, helsinki)
         assertClock("02:28", day.set, helsinki)
     }
 
     @Test
     fun `Rome on 1 December 2026 has no moonrise`() {
-        val day = Moon.day(LocalDate.of(2026, 12, 1), rome, 41.89, 12.48)
+        val day = Sky.day(Sky.Body.Moon, LocalDate.of(2026, 12, 1), rome, 41.89, 12.48)
         assertNull(day.rise)
         assertClock("12:40", day.set, rome)
         assertFalse(day.upAllDay)
@@ -63,7 +63,7 @@ class MoonTest {
     @Test
     fun `phases match USNO's moments`() {
         // USNO: last quarter 1 Nov 20:28, new 9 Nov 07:02, first quarter 17 Nov 11:48, full 24 Nov 14:53 (UTC).
-        fun at(text: String) = Moon.phase(Instant.parse(text))
+        fun at(text: String) = Sky.moonPhase(Instant.parse(text))
         assertEquals("Last quarter", at("2026-11-01T20:28:00Z").name)
         assertEquals(270.0, at("2026-11-01T20:28:00Z").elongation, 0.5)
         assertEquals("New moon", at("2026-11-09T07:02:00Z").name)
@@ -76,20 +76,62 @@ class MoonTest {
 
     @Test
     fun `phase names between the main phases`() {
-        assertEquals("Waning crescent", Moon.phase(Instant.parse("2026-11-04T12:00:00Z")).name)
-        assertEquals("Waxing crescent", Moon.phase(Instant.parse("2026-11-12T12:00:00Z")).name)
-        val gibbous = Moon.phase(Instant.parse("2026-11-20T12:00:00Z"))
+        assertEquals("Waning crescent", Sky.moonPhase(Instant.parse("2026-11-04T12:00:00Z")).name)
+        assertEquals("Waxing crescent", Sky.moonPhase(Instant.parse("2026-11-12T12:00:00Z")).name)
+        val gibbous = Sky.moonPhase(Instant.parse("2026-11-20T12:00:00Z"))
         assertEquals("Waxing gibbous", gibbous.name)
         assertTrue(gibbous.waxing)
-        assertEquals("Waning gibbous", Moon.phase(Instant.parse("2026-11-28T12:00:00Z")).name)
+        assertEquals("Waning gibbous", Sky.moonPhase(Instant.parse("2026-11-28T12:00:00Z")).name)
     }
 
     @Test
     fun `far north the Moon can stay up all day`() {
         // Svalbard during the 2025-2026 major lunar standstill: the Moon is circumpolar for days.
         val zone = ZoneId.of("Arctic/Longyearbyen")
-        val days = (0L until 30L).map { Moon.day(LocalDate.of(2026, 11, 1).plusDays(it), zone, 78.22, 15.65) }
+        val days = (0L until 30L).map { Sky.day(Sky.Body.Moon, LocalDate.of(2026, 11, 1).plusDays(it), zone, 78.22, 15.65) }
         assertTrue(days.any { it.upAllDay })
         assertTrue(days.any { it.rise == null && it.set == null && !it.upAllDay })
+    }
+
+    private val tromso = ZoneId.of("Europe/Oslo")
+
+    @Test
+    fun `sunrise and sunset match USNO`() {
+        val turku = Sky.day(Sky.Body.Sun, LocalDate.of(2026, 11, 3), helsinki, 60.45, 22.27)
+        assertClock("08:00", turku.rise, helsinki)
+        assertClock("16:28", turku.set, helsinki)
+        val treviso = Sky.day(Sky.Body.Sun, LocalDate.of(2026, 6, 21), rome, 45.72, 12.25)
+        assertClock("05:21", treviso.rise, rome)
+        assertClock("21:04", treviso.set, rome)
+        val lastDay = Sky.day(Sky.Body.Sun, LocalDate.of(2026, 11, 27), tromso, 69.65, 18.96)
+        assertClock("11:21", lastDay.rise, tromso)
+        assertClock("11:42", lastDay.set, tromso)
+    }
+
+    @Test
+    fun `polar night has no sunrise, and the next one is found`() {
+        val day = Sky.day(Sky.Body.Sun, LocalDate.of(2026, 11, 28), tromso, 69.65, 18.96)
+        assertNull(day.rise)
+        assertNull(day.set)
+        assertFalse(day.upAllDay)
+        val next = Sky.next(Sky.Body.Sun, rising = true, Instant.parse("2026-11-28T12:00:00Z"), 69.65, 18.96)
+        // USNO: first sunrise on 15 January 2027 at 11:35.
+        assertEquals(LocalDate.of(2027, 1, 15), next!!.atZone(tromso).toLocalDate())
+        assertClock("11:35", next, tromso)
+    }
+
+    @Test
+    fun `midnight sun stays up all day`() {
+        val day = Sky.day(Sky.Body.Sun, LocalDate.of(2026, 6, 21), tromso, 69.65, 18.96)
+        assertTrue(day.upAllDay)
+        assertNotNull(Sky.next(Sky.Body.Sun, rising = false, Instant.parse("2026-06-21T12:00:00Z"), 69.65, 18.96))
+    }
+
+    @Test
+    fun `next moonrise after a day without one`() {
+        // USNO: Turku has no moonrise on 3 November, the next is on 4 November at 01:24.
+        val next = Sky.next(Sky.Body.Moon, rising = true, Instant.parse("2026-11-03T22:00:00Z"), 60.45, 22.27)
+        assertEquals(LocalDate.of(2026, 11, 4), next!!.atZone(helsinki).toLocalDate())
+        assertClock("01:24", next, helsinki)
     }
 }

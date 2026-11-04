@@ -201,7 +201,7 @@ private fun WeatherContent(report: WeatherReport, error: RefreshError?, settings
         if (ForecastSection.RainNextHour in settings.visibleSections) item { RainCard(report, now) }
         if (ForecastSection.HourlyStrip in settings.visibleSections) item { HourlyCard(report, now) }
         if (ForecastSection.DailyForecast in settings.visibleSections) item { DailyCard(report, now, settings.visibleDayDetails) }
-        if (settings.visibleCards.isNotEmpty()) item { DetailCards(report, now, settings.visibleCards) }
+        if (settings.visibleCards.isNotEmpty()) item { DetailCards(report, now, settings.cardOrder, settings.visibleCards) }
         item { Spacer(Modifier.height(16.dp)) }
     }
 }

@@ -45,6 +45,40 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun `card order is stored, and shown cards skip hidden ones`() = runTest {
+        val repository = SettingsRepository(newStore())
+        assertEquals(DetailCardType.entries, repository.settings.first().cardOrder)
+        repository.setCardVisible(DetailCardType.UvIndex, false)
+
+        repository.moveCard(DetailCardType.Wind, down = true) // past hidden UV, swaps with Sun
+        repository.moveCard(DetailCardType.Pollen, down = true) // already last: stays
+        repository.moveCard(DetailCardType.UvIndex, down = false) // hidden: one place
+        assertEquals(
+            listOf(
+                DetailCardType.UvIndex, DetailCardType.Sun, DetailCardType.Wind, DetailCardType.Moon,
+                DetailCardType.Humidity, DetailCardType.Pressure, DetailCardType.AirQuality, DetailCardType.Pollen,
+            ),
+            repository.settings.first().cardOrder,
+        )
+        repository.moveCard(DetailCardType.Moon, down = false)
+        assertEquals(
+            listOf(DetailCardType.UvIndex, DetailCardType.Sun, DetailCardType.Moon, DetailCardType.Wind),
+            repository.settings.first().cardOrder.take(4),
+        )
+    }
+
+    @Test
+    fun `a stored order missing newer cards gets them at the end, unknown names are dropped`() = runTest {
+        val store = newStore()
+        store.edit { it[stringPreferencesKey("card_order")] = "Pollen,Gone,Wind,Wind" }
+
+        val order = SettingsRepository(store).settings.first().cardOrder
+        assertEquals(listOf(DetailCardType.Pollen, DetailCardType.Wind), order.take(2))
+        assertEquals(DetailCardType.entries.toSet(), order.toSet())
+        assertEquals(DetailCardType.entries.size, order.size)
+    }
+
+    @Test
     fun `theme and palette are stored`() = runTest {
         val repository = SettingsRepository(newStore())
 

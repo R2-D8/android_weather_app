@@ -14,20 +14,27 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Moonrise, moonset and phase, computed on the phone (Open-Meteo has no moon data).
+ * Rise and set of the Sun and the Moon, and the Moon's phase, computed on the phone without network.
+ *
+ * Open-Meteo gives sunrise and sunset but no moon data, and in polar night it answers 00:00 for
+ * both; computing both bodies here keeps them consistent and also finds the next rise or set when
+ * a day has none.
  *
  * The Moon's position uses the low-precision series of Montenbruck and Pfleger ("Astronomy on the
- * Personal Computer", MiniMoon): about 1 arcminute, which puts rise and set within a minute or two
- * of the US Naval Observatory's times (checked in the unit tests). Rise and set are when the
- * Moon's upper edge touches the horizon, with standard refraction and the Moon's parallax, for a
- * flat horizon at sea level, the same definition almanacs use.
+ * Personal Computer", MiniMoon), about 1 arcminute; the Sun's the Astronomical Almanac's
+ * low-precision formula, about 0.01 degrees. Rise and set are when the upper edge touches the
+ * horizon, with standard refraction (and the Moon's parallax), for a flat horizon at sea level, the
+ * same definition almanacs use. The unit tests check both against the US Naval Observatory: within
+ * two minutes.
  */
-object Moon {
-    /** Rise and set on one local day; either can be missing (about once a month each). */
+object Sky {
+    enum class Body { Sun, Moon }
+
+    /** Rise and set on one local day; either can be missing. */
     data class Day(
         val rise: Instant?,
         val set: Instant?,
-        /** Without a rise or set: whether the Moon stays up all day (only possible far north). */
+        /** Without a rise or set: whether the body stays up all day (midnight sun, or the Moon far north). */
         val upAllDay: Boolean,
     )
 
@@ -59,68 +66,89 @@ object Moon {
     private const val PHASE_HALF_WIDTH = 6.1
     private const val STEP_SECONDS = 600L
     private const val REFRACTION_DEG = 0.5667
-    private const val SEMIDIAMETER_DEG = 0.2725 // times the parallax gives the apparent radius
+    private const val MOON_RADIUS_PER_PARALLAX = 0.2725 // times the parallax gives the apparent radius
+    private const val SUN_RADIUS_DEG = 0.2666
 
-    fun day(date: LocalDate, zone: ZoneId, latitude: Double, longitude: Double): Day {
+    /** Polar night in Svalbard lasts about 4 months, the midnight sun about 4.5: a year covers every case. */
+    const val SEARCH_DAYS = 370L
+
+    fun day(body: Body, date: LocalDate, zone: ZoneId, latitude: Double, longitude: Double): Day {
         val start = date.atStartOfDay(zone).toInstant()
         val end = date.plusDays(1).atStartOfDay(zone).toInstant()
-        var rise: Instant? = null
-        var set: Instant? = null
-        var t0 = start
-        var a0 = horizonAltitude(t0, latitude, longitude)
-        val firstAltitude = a0
-        while (t0 < end) {
-            val t1 = minOf(t0.plusSeconds(STEP_SECONDS), end)
-            val a1 = horizonAltitude(t1, latitude, longitude)
-            if (a0 < 0 && a1 >= 0 && rise == null) rise = crossing(t0, t1, latitude, longitude)
-            if (a0 >= 0 && a1 < 0 && set == null) set = crossing(t0, t1, latitude, longitude)
+        val up = altitude(body, start, latitude, longitude) >= 0
+        val rise = next(body, rising = true, start, end, latitude, longitude)
+        val set = next(body, rising = false, start, end, latitude, longitude)
+        return Day(rise, set, upAllDay = rise == null && set == null && up)
+    }
+
+    /** The first rise ([rising]) or set after [after], searching up to [SEARCH_DAYS] days ahead. */
+    fun next(body: Body, rising: Boolean, after: Instant, latitude: Double, longitude: Double): Instant? =
+        next(body, rising, after, after.plusSeconds(SEARCH_DAYS * 86_400), latitude, longitude)
+
+    private fun next(
+        body: Body,
+        rising: Boolean,
+        from: Instant,
+        until: Instant,
+        latitude: Double,
+        longitude: Double,
+    ): Instant? {
+        var t0 = from
+        var a0 = altitude(body, t0, latitude, longitude)
+        while (t0 < until) {
+            val t1 = minOf(t0.plusSeconds(STEP_SECONDS), until)
+            val a1 = altitude(body, t1, latitude, longitude)
+            if (rising && a0 < 0 && a1 >= 0) return crossing(body, t0, t1, latitude, longitude)
+            if (!rising && a0 >= 0 && a1 < 0) return crossing(body, t0, t1, latitude, longitude)
             t0 = t1
             a0 = a1
         }
-        return Day(rise, set, upAllDay = rise == null && set == null && firstAltitude >= 0)
+        return null
     }
 
-    fun phase(time: Instant): Phase {
+    fun moonPhase(time: Instant): Phase {
         val t = centuries(time)
         val moon = moonEcliptic(t)
-        val sunLongitude = sunLongitude(t)
-        val elongation = wrap360(Math.toDegrees(moon.longitude) - sunLongitude)
+        val elongation = wrap360(Math.toDegrees(moon.longitude) - sunLongitude(t))
         // Angle Sun-Moon seen from Earth; the phase angle at the Moon is its supplement (the Sun is
         // ~390 times further away than the Moon, so the error is under 0.2 degrees).
         val cosPsi = cos(moon.latitude) * cos(Math.toRadians(elongation))
         return Phase(illumination = (1 - cosPsi) / 2, elongation = elongation)
     }
 
-    /** Altitude of the Moon's upper edge above the refracted horizon, in degrees (>= 0: visible). */
-    private fun horizonAltitude(time: Instant, latitude: Double, longitude: Double): Double {
+    /** Altitude of the body's upper edge above the refracted horizon, in degrees (>= 0: visible). */
+    private fun altitude(body: Body, time: Instant, latitude: Double, longitude: Double): Double {
         val t = centuries(time)
-        val moon = moonEcliptic(t)
+        val (lambda, beta, correction) = when (body) {
+            Body.Moon -> {
+                val moon = moonEcliptic(t)
+                // Seen from the surface the Moon sits lower by its parallax; the upper edge is one radius above the centre.
+                Triple(moon.longitude, moon.latitude, -moon.parallaxDeg + MOON_RADIUS_PER_PARALLAX * moon.parallaxDeg)
+            }
+            Body.Sun -> Triple(Math.toRadians(sunLongitude(t)), 0.0, SUN_RADIUS_DEG)
+        }
         val eps = Math.toRadians(23.43929111 - 0.0130042 * t)
         // Ecliptic to equatorial.
-        val x = cos(moon.latitude) * cos(moon.longitude)
-        val y = cos(eps) * cos(moon.latitude) * sin(moon.longitude) - sin(eps) * sin(moon.latitude)
-        val z = sin(eps) * cos(moon.latitude) * sin(moon.longitude) + cos(eps) * sin(moon.latitude)
+        val x = cos(beta) * cos(lambda)
+        val y = cos(eps) * cos(beta) * sin(lambda) - sin(eps) * sin(beta)
+        val z = sin(eps) * cos(beta) * sin(lambda) + cos(eps) * sin(beta)
         val ra = atan2(y, x)
         val dec = atan2(z, sqrt(x * x + y * y))
-        val days = julianDays(time)
-        val siderealDeg = 280.46061837 + 360.98564736629 * days + longitude
+        val siderealDeg = 280.46061837 + 360.98564736629 * julianDays(time) + longitude
         val hourAngle = Math.toRadians(siderealDeg) - ra
         val lat = Math.toRadians(latitude)
-        val altitude = Math.toDegrees(asin(sin(lat) * sin(dec) + cos(lat) * cos(dec) * cos(hourAngle)))
-        // Seen from the surface the Moon sits lower by its parallax; refraction lifts it, and the
-        // upper edge is one radius above the centre.
-        val parallax = moon.parallaxDeg
-        return altitude - parallax + REFRACTION_DEG + SEMIDIAMETER_DEG * parallax
+        val geometric = Math.toDegrees(asin(sin(lat) * sin(dec) + cos(lat) * cos(dec) * cos(hourAngle)))
+        return geometric + correction + REFRACTION_DEG
     }
 
     /** The moment in [a, b] where the altitude changes sign, to within a few seconds. */
-    private fun crossing(a: Instant, b: Instant, latitude: Double, longitude: Double): Instant {
+    private fun crossing(body: Body, a: Instant, b: Instant, latitude: Double, longitude: Double): Instant {
         var lo = a
         var hi = b
-        val rising = horizonAltitude(a, latitude, longitude) < 0
+        val rising = altitude(body, a, latitude, longitude) < 0
         while (hi.epochSecond - lo.epochSecond > 5) {
             val mid = lo.plusSeconds((hi.epochSecond - lo.epochSecond) / 2)
-            val up = horizonAltitude(mid, latitude, longitude) >= 0
+            val up = altitude(body, mid, latitude, longitude) >= 0
             if (up == rising) hi = mid else lo = mid
         }
         return lo.plusSeconds((hi.epochSecond - lo.epochSecond) / 2)
@@ -128,7 +156,7 @@ object Moon {
 
     private class Ecliptic(val longitude: Double, val latitude: Double, val parallaxDeg: Double)
 
-    /** Geocentric ecliptic longitude and latitude (radians, of date) and horizontal parallax. */
+    /** The Moon's geocentric ecliptic longitude and latitude (radians, of date) and horizontal parallax. */
     private fun moonEcliptic(t: Double): Ecliptic {
         val l0 = frac(0.606433 + 1336.855225 * t)
         val l = 2 * PI * frac(0.374897 + 1325.552410 * t) // Moon's mean anomaly

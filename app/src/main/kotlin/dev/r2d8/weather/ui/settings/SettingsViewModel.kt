@@ -71,6 +71,8 @@ class SettingsViewModel(
     fun setCardVisible(card: DetailCardType, visible: Boolean) =
         viewModelScope.launch { repository.setCardVisible(card, visible) }
 
+    fun moveCard(card: DetailCardType, down: Boolean) = viewModelScope.launch { repository.moveCard(card, down) }
+
     fun setRadarHistoryOnMobileData(enabled: Boolean) =
         viewModelScope.launch { repository.setRadarHistoryOnMobileData(enabled) }
 
