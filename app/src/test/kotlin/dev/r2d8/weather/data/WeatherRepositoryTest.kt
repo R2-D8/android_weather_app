@@ -50,6 +50,8 @@ class WeatherRepositoryTest {
 
     private var forecastStatus = 200
     private var airStatus = 200
+    private var phaseStatus = 200
+    private val phaseBody = """{"hourly":{"time":[1761256800],"rain":[0.0],"showers":[0.0],"snowfall":[0.5]}}"""
     private val requests = mutableListOf<String>()
 
     private fun resource(name: String) = checkNotNull(javaClass.classLoader?.getResource(name)).readText()
@@ -62,6 +64,8 @@ class WeatherRepositoryTest {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 requests += request.path.orEmpty()
                 return when {
+                    "models=ecmwf_ifs025" in request.path.orEmpty() ->
+                        if (phaseStatus == 200) MockResponse().setBody(phaseBody) else MockResponse().setResponseCode(phaseStatus)
                     request.path.orEmpty().startsWith("/v1/forecast") ->
                         if (forecastStatus == 200) MockResponse().setBody(resource("forecast_rome.json")) else MockResponse().setResponseCode(forecastStatus)
                     request.path.orEmpty().startsWith("/v1/air-quality") ->
@@ -95,7 +99,7 @@ class WeatherRepositoryTest {
     fun `requests ask for unix time and automatic timezone`() = runTest {
         repository.refresh(Place.Rome)
 
-        val forecast = requests.first { it.startsWith("/v1/forecast") }
+        val forecast = requests.first { it.startsWith("/v1/forecast") && "models=" !in it }
         assertTrue(forecast, "timeformat=unixtime" in forecast && "timezone=auto" in forecast)
         assertTrue(forecast, "latitude=41.89" in forecast && "longitude=12.48" in forecast)
     }
@@ -105,7 +109,7 @@ class WeatherRepositoryTest {
         repository.refresh(Place("Somewhere", 60.451234, 22.266789))
 
         val sent = requests.filter { it.startsWith("/v1/") }
-        assertTrue(sent.toString(), sent.size == 2 && sent.all { "latitude=60.45&" in it && "longitude=22.27&" in it })
+        assertTrue(sent.toString(), sent.size == 3 && sent.all { "latitude=60.45&" in it && "longitude=22.27&" in it })
     }
 
     @Test
@@ -153,6 +157,28 @@ class WeatherRepositoryTest {
         assertTrue(repository.refresh(Place.Rome).isSuccess)
 
         assertNull(checkNotNull(repository.observe(Place.Rome).first()).airQuality)
+    }
+
+    @Test
+    fun `the phase check is cached, and kept when it fails`() = runTest {
+        repository.refresh(Place.Rome)
+        val key = WeatherRepository.cacheKey(Place.Rome)
+        assertTrue("snowfall" in checkNotNull(dao.get(key)?.phaseCheckJson))
+
+        phaseStatus = 500
+        now = now.plus(Duration.ofHours(1))
+        assertTrue(repository.refresh(Place.Rome).isSuccess)
+
+        assertEquals(now.toEpochMilli(), dao.get(key)?.fetchedAtEpochMs)
+        assertTrue("snowfall" in checkNotNull(dao.get(key)?.phaseCheckJson))
+    }
+
+    @Test
+    fun `failed phase check on first load still gives a report`() = runTest {
+        phaseStatus = 500
+
+        assertTrue(repository.refresh(Place.Rome).isSuccess)
+        assertNotNull(repository.observe(Place.Rome).first())
     }
 
     @Test

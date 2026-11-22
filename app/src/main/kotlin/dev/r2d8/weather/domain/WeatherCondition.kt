@@ -13,10 +13,12 @@ enum class ConditionKind(val severity: Int) {
     PossibleRain(4),
     Drizzle(5),
     Rain(6),
-    Snow(7),
-    FreezingRain(8),
-    HeavyRain(9),
-    Thunderstorm(10),
+    /** Display only: set by [withPhase] when rain and snow fall together (Open-Meteo has no such code). */
+    RainAndSnow(7),
+    Snow(8),
+    FreezingRain(9),
+    HeavyRain(10),
+    Thunderstorm(11),
 }
 
 /** A WMO weather interpretation code (as used by Open-Meteo) with its English text. */
@@ -37,6 +39,9 @@ enum class WeatherCondition(val code: Int, val label: String, val kind: Conditio
     HeavyRain(65, "Heavy rain", ConditionKind.HeavyRain),
     LightFreezingRain(66, "Light freezing rain", ConditionKind.FreezingRain),
     FreezingRain(67, "Freezing rain", ConditionKind.FreezingRain),
+    // 68, 69, 83 and 84 are WMO codes Open-Meteo never sends; only withPhase (PrecipitationPhase.kt) sets them.
+    LightRainAndSnow(68, "Light rain and snow", ConditionKind.RainAndSnow),
+    RainAndSnow(69, "Rain and snow", ConditionKind.RainAndSnow),
     LightSnow(71, "Light snow", ConditionKind.Snow),
     Snow(73, "Snow", ConditionKind.Snow),
     HeavySnow(75, "Heavy snow", ConditionKind.Snow),
@@ -44,6 +49,8 @@ enum class WeatherCondition(val code: Int, val label: String, val kind: Conditio
     LightShowers(80, "Light rain showers", ConditionKind.Rain),
     Showers(81, "Rain showers", ConditionKind.Rain),
     HeavyShowers(82, "Heavy rain showers", ConditionKind.HeavyRain),
+    LightRainAndSnowShowers(83, "Light rain and snow showers", ConditionKind.RainAndSnow),
+    RainAndSnowShowers(84, "Rain and snow showers", ConditionKind.RainAndSnow),
     LightSnowShowers(85, "Light snow showers", ConditionKind.Snow),
     HeavySnowShowers(86, "Heavy snow showers", ConditionKind.Snow),
     Thunderstorm(95, "Thunderstorm", ConditionKind.Thunderstorm),

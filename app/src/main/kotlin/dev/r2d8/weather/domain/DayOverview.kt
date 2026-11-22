@@ -18,7 +18,7 @@ object DayOverview {
 
     private val wetKinds = setOf(
         ConditionKind.Drizzle, ConditionKind.Rain, ConditionKind.HeavyRain,
-        ConditionKind.Snow, ConditionKind.FreezingRain,
+        ConditionKind.RainAndSnow, ConditionKind.Snow, ConditionKind.FreezingRain,
     )
 
     /**

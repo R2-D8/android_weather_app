@@ -2,6 +2,8 @@ package dev.r2d8.weather.data
 
 import dev.r2d8.weather.data.remote.AirQualityResponse
 import dev.r2d8.weather.data.remote.ForecastResponse
+import dev.r2d8.weather.data.remote.PhaseCheckHourlyDto
+import dev.r2d8.weather.data.remote.PhaseCheckResponse
 import dev.r2d8.weather.domain.PollenType
 import dev.r2d8.weather.domain.WeatherCondition
 import kotlinx.serialization.json.Json
@@ -36,6 +38,30 @@ class MappersTest {
         assertEquals(0, report.current.cloudCoverLow)
         assertEquals(5, report.current.cloudCoverMid)
         assertEquals(96, report.current.cloudCoverHigh)
+    }
+
+    @Test
+    fun `rain or snow is corrected for now and per hour, not per day`() {
+        val hourTimes = forecast.hourly.time
+        val drizzle = forecast.copy(
+            // 0.6 °C at 86 %: wet bulb below 0.5 °C, snow without any second opinion.
+            current = forecast.current.copy(time = hourTimes[3] - 900, weatherCode = 51, temperature = 0.6, humidity = 86.0),
+            hourly = forecast.hourly.copy(
+                weatherCode = forecast.hourly.weatherCode.mapIndexed { i, c -> if (i < 2) 61 else c },
+                humidity = emptyList(), // No wet bulb: only the second model decides.
+            ),
+            daily = forecast.daily.copy(weatherCode = forecast.daily.weatherCode.mapIndexed { i, c -> if (i == 0) 61 else c }),
+        )
+        val check = PhaseCheckResponse(PhaseCheckHourlyDto(time = hourTimes.take(2), rain = listOf(0.0, 1.0), snowfall = listOf(0.7, 0.0)))
+
+        val report = drizzle.toReport(null, fetchedAt, check)
+
+        assertEquals(WeatherCondition.LightSnow, report.current.condition)
+        assertEquals(WeatherCondition.LightSnow, report.hours[0].condition)
+        assertEquals(WeatherCondition.LightRain, report.hours[1].condition)
+        assertEquals(WeatherCondition.LightRain, report.days[0].condition)
+        // Without a phase check nothing in the hours changes.
+        assertEquals(WeatherCondition.LightRain, drizzle.toReport(null, fetchedAt).hours[0].condition)
     }
 
     @Test

@@ -3,22 +3,39 @@ package dev.r2d8.weather.data
 import dev.r2d8.weather.data.remote.AirQualityCurrentDto
 import dev.r2d8.weather.data.remote.AirQualityResponse
 import dev.r2d8.weather.data.remote.ForecastResponse
+import dev.r2d8.weather.data.remote.PhaseCheckResponse
 import dev.r2d8.weather.domain.AirQuality
 import dev.r2d8.weather.domain.CurrentConditions
 import dev.r2d8.weather.domain.DayForecast
 import dev.r2d8.weather.domain.HourForecast
 import dev.r2d8.weather.domain.PollenReading
 import dev.r2d8.weather.domain.PollenType
+import dev.r2d8.weather.domain.PrecipitationPhase
 import dev.r2d8.weather.domain.RainSlot
 import dev.r2d8.weather.domain.WeatherCondition
 import dev.r2d8.weather.domain.WeatherReport
+import dev.r2d8.weather.domain.withPhase
 import java.time.Instant
 import java.time.ZoneId
 import kotlin.math.roundToInt
 
-/** Combines a forecast and an optional air-quality response into the app's model. */
-fun ForecastResponse.toReport(air: AirQualityResponse?, fetchedAt: Instant): WeatherReport {
+/**
+ * Combines a forecast, an optional air-quality response and an optional second model's rain/snow
+ * split ([phaseCheck]) into the app's model. Rain or snow in the current and hourly conditions is
+ * corrected by [PrecipitationPhase]; the daily code is only a fallback for the icon and stays as sent.
+ */
+fun ForecastResponse.toReport(air: AirQualityResponse?, fetchedAt: Instant, phaseCheck: PhaseCheckResponse? = null): WeatherReport {
     val zone = ZoneId.of(timezone)
+    val secondModel = phaseCheck?.hourly?.let { h ->
+        h.time.indices.associate { i ->
+            h.time[i] to PrecipitationPhase.fromModel(
+                rainMm = (h.rain.getOrNull(i) ?: 0.0) + (h.showers.getOrNull(i) ?: 0.0),
+                snowfallCm = h.snowfall.getOrNull(i),
+            )
+        }
+    }.orEmpty()
+    // Hourly values cover the hour before their time, so "now" belongs to the hour ending next.
+    val currentHourEnd = (current.time + 3599) / 3600 * 3600
     // Open-Meteo steps its daily timestamps by exactly 24 h and ignores clock changes, so after a
     // DST change they land at 23:00 of the previous day. Only the first one is a true local
     // midnight: take its date and count days from there instead of converting every timestamp.
@@ -36,7 +53,9 @@ fun ForecastResponse.toReport(air: AirQualityResponse?, fetchedAt: Instant): Wea
             dewPoint = current.dewPoint,
             isDay = current.isDay != 0,
             precipitation = current.precipitation,
-            condition = WeatherCondition.fromCode(current.weatherCode),
+            condition = WeatherCondition.fromCode(current.weatherCode).withPhase(
+                PrecipitationPhase.decide(current.temperature, current.humidity, secondModel[currentHourEnd]),
+            ),
             cloudCover = current.cloudCover?.roundToInt(),
             cloudCoverLow = current.cloudCoverLow?.roundToInt(),
             cloudCoverMid = current.cloudCoverMid?.roundToInt(),
@@ -57,7 +76,9 @@ fun ForecastResponse.toReport(air: AirQualityResponse?, fetchedAt: Instant): Wea
                 temperature = hourly.temperature.getOrNull(i),
                 precipitationProbability = hourly.precipitationProbability.getOrNull(i)?.roundToInt(),
                 precipitation = hourly.precipitation.getOrNull(i),
-                condition = WeatherCondition.fromCode(hourly.weatherCode.getOrNull(i)),
+                condition = WeatherCondition.fromCode(hourly.weatherCode.getOrNull(i)).withPhase(
+                    PrecipitationPhase.decide(hourly.temperature.getOrNull(i), hourly.humidity.getOrNull(i), secondModel[t]),
+                ),
                 isDay = hourly.isDay.getOrNull(i) != 0,
                 windSpeed = hourly.windSpeed.getOrNull(i),
                 windGusts = hourly.windGusts.getOrNull(i),

@@ -6,6 +6,7 @@ import dev.r2d8.weather.data.remote.AirQualityApi
 import dev.r2d8.weather.data.remote.AirQualityResponse
 import dev.r2d8.weather.data.remote.ForecastApi
 import dev.r2d8.weather.data.remote.ForecastResponse
+import dev.r2d8.weather.data.remote.PhaseCheckResponse
 import dev.r2d8.weather.domain.Place
 import dev.r2d8.weather.domain.WeatherReport
 import kotlinx.coroutines.Dispatchers
@@ -37,8 +38,9 @@ class WeatherRepository(
         dao.observe(cacheKey(place)).map { it?.toReportOrNull() }.flowOn(Dispatchers.Default)
 
     /**
-     * Downloads new data unless the cache is younger than [maxAge]. A failed air-quality request
-     * does not fail the refresh; it keeps the previously cached air quality instead.
+     * Downloads new data unless the cache is younger than [maxAge]. A failed air-quality or
+     * phase-check request does not fail the refresh; it keeps the previously cached one instead
+     * (the phase check is matched by hour, so an older one still covers the hours it shares).
      */
     suspend fun refresh(place: Place, maxAge: Duration = Duration.ZERO): Result<Unit> {
         val key = cacheKey(place)
@@ -47,13 +49,14 @@ class WeatherRepository(
             return Result.success(Unit)
         }
         return runCatchingCancellable {
-            val (forecast, air) = coroutineScope {
+            val (forecast, air, phaseCheck) = coroutineScope {
                 // Privacy: the server only ever sees coordinates rounded to ~1 km, never the exact GPS fix.
                 val lat = roundCoordinate(place.latitude)
                 val lon = roundCoordinate(place.longitude)
                 val forecast = async { forecastApi.forecast(lat, lon) }
                 val air = async { runCatchingCancellable { airQualityApi.airQuality(lat, lon) }.getOrNull() }
-                forecast.await() to air.await()
+                val phaseCheck = async { runCatchingCancellable { forecastApi.phaseCheck(lat, lon) }.getOrNull() }
+                Triple(forecast.await(), air.await(), phaseCheck.await())
             }
             dao.upsert(
                 CachedWeather(
@@ -62,6 +65,8 @@ class WeatherRepository(
                     airQualityJson = air?.let { json.encodeToString(AirQualityResponse.serializer(), it) }
                         ?: cached?.airQualityJson,
                     fetchedAtEpochMs = clock.millis(),
+                    phaseCheckJson = phaseCheck?.let { json.encodeToString(PhaseCheckResponse.serializer(), it) }
+                        ?: cached?.phaseCheckJson,
                 ),
             )
         }
@@ -70,7 +75,11 @@ class WeatherRepository(
     private fun CachedWeather.toReportOrNull(): WeatherReport? = try {
         val forecast = json.decodeFromString(ForecastResponse.serializer(), forecastJson)
         val air = airQualityJson?.let { json.decodeFromString(AirQualityResponse.serializer(), it) }
-        forecast.toReport(air, Instant.ofEpochMilli(fetchedAtEpochMs))
+        // An unreadable phase check only loses the correction, not the forecast.
+        val phaseCheck = phaseCheckJson?.let {
+            try { json.decodeFromString(PhaseCheckResponse.serializer(), it) } catch (_: SerializationException) { null }
+        }
+        forecast.toReport(air, Instant.ofEpochMilli(fetchedAtEpochMs), phaseCheck)
     } catch (_: SerializationException) {
         null // Cache written by an incompatible version: treat as empty, the next refresh replaces it.
     }

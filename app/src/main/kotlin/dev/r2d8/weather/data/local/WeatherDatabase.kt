@@ -22,6 +22,8 @@ data class CachedWeather(
     val forecastJson: String,
     val airQualityJson: String?,
     val fetchedAtEpochMs: Long,
+    /** The second model's rain/snow split ([dev.r2d8.weather.data.remote.PhaseCheckResponse]), null if never fetched. */
+    val phaseCheckJson: String? = null,
 )
 
 @Dao
@@ -68,12 +70,13 @@ interface SavedPlaceDao {
     suspend fun setPosition(id: Long, position: Int)
 }
 
-// Version 2 added saved_places. The auto-migration only adds the table, so the weather cache is kept.
+// Version 2 added saved_places, version 3 cached_weather.phaseCheckJson. The auto-migrations only add
+// a table or a nullable column, so the weather cache is kept.
 @Database(
     entities = [CachedWeather::class, SavedPlaceEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 1, to = 2)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
 )
 abstract class WeatherDatabase : RoomDatabase() {
     abstract fun cachedWeatherDao(): CachedWeatherDao

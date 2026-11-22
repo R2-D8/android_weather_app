@@ -32,6 +32,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.r2d8.weather.domain.ConditionKind
 import dev.r2d8.weather.domain.HourForecast
 import dev.r2d8.weather.domain.RainNowcast
 import dev.r2d8.weather.domain.RainNowcaster
@@ -99,8 +100,14 @@ fun CurrentCard(report: WeatherReport, now: Instant) {
 @Composable
 fun RainCard(report: WeatherReport, now: Instant) {
     val nowcast = remember(report, now) { RainNowcaster.summarize(report.rainSlots, now) }
-    SectionCard("Rain in the next hour") {
-        Text(nowcast.describe(), style = MaterialTheme.typography.titleMedium)
+    // The 15-minute data is only an amount; whether it falls as snow follows the current conditions.
+    val noun = when (report.current.condition.kind) {
+        ConditionKind.Snow -> "snow"
+        ConditionKind.RainAndSnow -> "rain and snow"
+        else -> "rain"
+    }
+    SectionCard("${noun.replaceFirstChar { it.uppercase() }} in the next hour") {
+        Text(nowcast.describe(noun), style = MaterialTheme.typography.titleMedium)
         val slots = remember(report, now) { report.rainSlots.filter { it.end > now }.take(8) }
         if (slots.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
@@ -130,15 +137,15 @@ fun RainCard(report: WeatherReport, now: Instant) {
     }
 }
 
-private fun RainNowcast.describe(): String = when (this) {
-    RainNowcast.Dry -> "No rain expected"
+private fun RainNowcast.describe(noun: String): String = when (this) {
+    RainNowcast.Dry -> "No $noun expected"
     RainNowcast.Unavailable -> "No short-term rain data for this place"
     is RainNowcast.RainingNow -> {
-        val rain = "${intensity.label.replaceFirstChar { it.uppercase() }} rain now"
+        val rain = "${intensity.label.replaceFirstChar { it.uppercase() }} $noun now"
         if (stopsInMinutes == null) "$rain, not stopping within the hour" else "$rain, stopping in ${stopsInMinutes.asMinutes()}"
     }
     is RainNowcast.RainStarting ->
-        "${intensity.label.replaceFirstChar { it.uppercase() }} rain starting in ${startsInMinutes.asMinutes()}"
+        "${intensity.label.replaceFirstChar { it.uppercase() }} $noun starting in ${startsInMinutes.asMinutes()}"
 }
 
 private fun Int.asMinutes(): String = if (this <= 1) "a moment" else "$this min"

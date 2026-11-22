@@ -23,12 +23,30 @@ interface ForecastApi {
         @Query("timeformat") timeFormat: String = "unixtime",
     ): ForecastResponse
 
+    /**
+     * A second model's split of each hour into rain and snow, to check the main model's phase
+     * (see domain/PrecipitationPhase.kt). About 1 KB compressed.
+     */
+    @GET("v1/forecast")
+    suspend fun phaseCheck(
+        @Query("latitude") latitude: Double,
+        @Query("longitude") longitude: Double,
+        @Query("models") models: String = PHASE_CHECK_MODEL,
+        @Query("hourly") hourly: String = PHASE_CHECK_HOURLY,
+        @Query("forecast_days") forecastDays: Int = 10,
+        @Query("timezone") timezone: String = "auto",
+        @Query("timeformat") timeFormat: String = "unixtime",
+    ): PhaseCheckResponse
+
     companion object {
+        /** ECMWF IFS 0.25°: hourly values for all 10 days and independent of the regional main models. */
+        const val PHASE_CHECK_MODEL = "ecmwf_ifs025"
+        const val PHASE_CHECK_HOURLY = "rain,showers,snowfall"
         const val CURRENT = "temperature_2m,apparent_temperature,relative_humidity_2m,dew_point_2m,is_day," +
             "precipitation,weather_code,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,pressure_msl," +
             "wind_speed_10m,wind_direction_10m,wind_gusts_10m"
         const val MINUTELY_15 = "precipitation"
-        const val HOURLY = "temperature_2m,precipitation_probability,precipitation,weather_code,is_day," +
+        const val HOURLY = "temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,weather_code,is_day," +
             "wind_speed_10m,wind_gusts_10m,uv_index"
         const val DAILY = "weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max," +
             "precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max"

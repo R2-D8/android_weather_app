@@ -56,7 +56,8 @@ fun iconFor(kind: ConditionKind, isDay: Boolean): Int = when (kind) {
     ConditionKind.Drizzle -> R.drawable.ic_rainy_light
     ConditionKind.Rain -> R.drawable.ic_rainy
     ConditionKind.HeavyRain -> R.drawable.ic_rainy_heavy
-    ConditionKind.FreezingRain -> R.drawable.ic_weather_mix
+    // Material's "weather_mix" (drop and snowflake) fits both.
+    ConditionKind.RainAndSnow, ConditionKind.FreezingRain -> R.drawable.ic_weather_mix
     ConditionKind.Snow -> R.drawable.ic_weather_snowy
     ConditionKind.Thunderstorm -> R.drawable.ic_thunderstorm
 }

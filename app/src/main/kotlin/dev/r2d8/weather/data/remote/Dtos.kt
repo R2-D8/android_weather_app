@@ -49,6 +49,7 @@ data class Minutely15Dto(
 data class HourlyDto(
     val time: List<Long>,
     @SerialName("temperature_2m") val temperature: List<Double?> = emptyList(),
+    @SerialName("relative_humidity_2m") val humidity: List<Double?> = emptyList(),
     @SerialName("precipitation_probability") val precipitationProbability: List<Double?> = emptyList(),
     val precipitation: List<Double?> = emptyList(),
     @SerialName("weather_code") val weatherCode: List<Int?> = emptyList(),
@@ -108,4 +109,19 @@ data class GeocodingResultDto(
     val admin1: String? = null,
     val timezone: String? = null,
     val population: Long? = null,
+)
+
+/** The second model's rain and snow per hour, see [ForecastApi.phaseCheck]. */
+@Serializable
+data class PhaseCheckResponse(val hourly: PhaseCheckHourlyDto)
+
+@Serializable
+data class PhaseCheckHourlyDto(
+    val time: List<Long>,
+    /** Rain from large-scale systems, mm in the preceding hour. */
+    val rain: List<Double?> = emptyList(),
+    /** Rain from convective showers, mm. */
+    val showers: List<Double?> = emptyList(),
+    /** Snow depth, cm (Open-Meteo: 1 mm of water = 0.7 cm). */
+    val snowfall: List<Double?> = emptyList(),
 )
